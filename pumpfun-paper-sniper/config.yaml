@@ -127,6 +127,19 @@ advanced:
   net_sell_flip_window_sec: 5.0     # Beobachtungsfenster in Sekunden
   net_sell_flip_threshold_sol: 0.05 # erst ab diesem Abfluss zaehlt es als Flip
                                     # (verhindert Fehlalarm bei Mini-Verkaeufen)
+  # Dieselben zwei Werte bremsen auch den EINSTIEG: Laeuft der Abverkauf im
+  # Flip-Fenster schon, wird nicht mehr gekauft. Sonst kauft der Bot Spitzen,
+  # die gerade kippen, und verkauft sie eine Sekunde spaeter wieder.
+
+  # --- Obergrenze fuers Momentum ---
+  # Wie weit darf der Kurs im Signalfenster HOECHSTENS gestiegen sein?
+  # 0 = keine Obergrenze (Standard).
+  # Hintergrund: min_price_gain_in_window_pct (oben) sagt "mindestens 8 %".
+  # Nach oben ist es offen - der Bot kauft also auch bei +200 %, und das ist
+  # meistens die Spitze eines Spikes, der gleich in sich zusammenfaellt.
+  # Wenn du in den Logs viele Kaeufe bei sehr hohem Momentum siehst, die
+  # sofort wieder mit FLIP oder RUG schliessen: hier z.B. 60 eintragen.
+  max_price_gain_in_window_pct: 0
 
   # --- Curve-Progress ---
   # progress = 1 - (realTokenReserves / initial_real_token_reserves)

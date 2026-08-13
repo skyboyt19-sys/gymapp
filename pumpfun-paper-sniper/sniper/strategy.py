@@ -254,6 +254,34 @@ def evaluate_entry(candidate: Candidate, cfg: Config) -> EntryDecision:
             False, f"Momentum zu schwach ({gain:+.1f}% < "
                    f"{cfg.min_price_gain_in_window_pct}%)")
 
+    # 5b) Laeuft der Abverkauf JETZT GERADE schon?
+    #
+    #     Der Kaufdruck oben wird ueber das ganze Fenster gemessen (z.B. 10 s).
+    #     Der bleibt positiv, auch wenn in den letzten zwei Sekunden bereits
+    #     abverkauft wird. Genau so hat der Bot Spitzen gekauft, die schon am
+    #     Kippen waren - und die Position eine Sekunde spaeter per Net-Sell-Flip
+    #     mit Verlust wieder geschlossen. Zweimal Gebuehren fuer nichts.
+    #
+    #     Grundregel: Keine Position eroeffnen, die die Ausstiegslogik im
+    #     naechsten Tick sofort wieder schliessen wuerde. Deshalb wird hier
+    #     bewusst mit demselben Fenster und derselben Schwelle geprueft wie
+    #     beim Flip-Ausstieg.
+    if cfg.exit_on_net_sell_flip:
+        window = cfg.advanced.net_sell_flip_window_sec
+        recent_flow = candidate.flow.net_flow_sol(window)
+        if recent_flow <= -abs(cfg.advanced.net_sell_flip_threshold_sol):
+            return EntryDecision(
+                False, f"Abverkauf laeuft bereits ({recent_flow:+.2f} SOL "
+                       f"in {window:.0f}s)")
+
+    # 5c) Ist der Token schon zu weit gelaufen?
+    #     Wer bei +200 % im Zehn-Sekunden-Fenster einsteigt, kauft die Spitze.
+    #     Standardmaessig aus (0 = keine Obergrenze), siehe config.yaml.
+    cap = cfg.advanced.max_price_gain_in_window_pct
+    if cap > 0 and gain > cap:
+        return EntryDecision(
+            False, f"schon zu weit gelaufen ({gain:+.1f}% > {cap:.0f}%)")
+
     # 6) Dev-Anteil: haelt der Ersteller zu viel, kann er den Kurs alleine kippen
     dev_pct = candidate.event.dev_holding_pct
     if dev_pct > cfg.max_dev_holding_pct:

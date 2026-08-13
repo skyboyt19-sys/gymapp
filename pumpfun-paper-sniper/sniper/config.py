@@ -38,6 +38,10 @@ class AdvancedConfig:
     net_sell_flip_window_sec: float = 5.0
     net_sell_flip_threshold_sol: float = 0.05
 
+    #: Obergrenze fuer das Momentum im Signalfenster. 0 = keine Obergrenze.
+    #: Verhindert, dass der Bot die Spitze eines schon gelaufenen Spikes kauft.
+    max_price_gain_in_window_pct: float = 0.0
+
     # Curve
     initial_real_token_reserves: int = 793_100_000_000_000
 
@@ -230,6 +234,9 @@ def _build_advanced(raw: Any) -> AdvancedConfig:
             raw.get("net_sell_flip_window_sec", defaults.net_sell_flip_window_sec)),
         net_sell_flip_threshold_sol=float(
             raw.get("net_sell_flip_threshold_sol", defaults.net_sell_flip_threshold_sol)),
+        max_price_gain_in_window_pct=float(
+            raw.get("max_price_gain_in_window_pct",
+                    defaults.max_price_gain_in_window_pct)),
         initial_real_token_reserves=int(
             raw.get("initial_real_token_reserves", defaults.initial_real_token_reserves)),
         pumpportal_ws_url=str(raw.get("pumpportal_ws_url", defaults.pumpportal_ws_url)),

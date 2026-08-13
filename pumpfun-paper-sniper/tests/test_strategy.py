@@ -213,6 +213,77 @@ def test_skip_bei_nur_einem_messpunkt(tmp_path):
     assert "Messpunkte" in decision.reason
 
 
+def test_skip_wenn_der_abverkauf_schon_laeuft(tmp_path):
+    """
+    Nachstellung eines Trades aus dem echten Betrieb (TISM6900):
+
+        SNIPE ... Progress 34.9% | Kaufdruck 7.46 SOL | Momentum +50.4%
+        Exit  ... (FLIP): -2.83 SOL Nettoabfluss in 5s     <- eine Sekunde spaeter
+
+    Ueber das ganze Fenster war der Kaufdruck klar positiv, aber in den
+    letzten Sekunden lief der Abverkauf bereits. Der Bot kaufte die Spitze und
+    warf sie sofort wieder weg - zweimal Gebuehren fuer nichts.
+
+    Es darf keine Position eroeffnet werden, die die Ausstiegslogik im
+    naechsten Tick sofort wieder schliessen wuerde.
+    """
+    cfg = make_config(tmp_path)
+    event = make_event(received_at=time.monotonic() - 10.5)
+    candidate = make_candidate(event)
+
+    now = time.monotonic()
+    # Erst laeuft der Kurs stark hoch (Kaufdruck und Momentum sind top) ...
+    candidate.on_tick(curve_at(4.0), now - 9.0)
+    candidate.on_tick(curve_at(9.0), now - 6.0)
+    candidate.on_tick(curve_at(12.0), now - 4.0)
+    # ... dann kippt es in den letzten Sekunden.
+    candidate.on_tick(curve_at(10.5), now - 1.0)
+    candidate.on_tick(curve_at(9.5), now)
+
+    # Die klassischen Filter wuerden alle passen:
+    assert candidate.net_buy_volume_sol > cfg.min_net_buy_volume_sol
+    assert candidate.price_gain_pct > cfg.min_price_gain_in_window_pct
+
+    # Trotzdem darf nicht gekauft werden.
+    decision = evaluate_entry(candidate, cfg)
+    assert decision.buy is False
+    assert "Abverkauf" in decision.reason
+
+
+def test_kauf_erlaubt_wenn_der_kaufdruck_noch_anhaelt(tmp_path):
+    """Gegenprobe: steigt der Kurs bis zuletzt, wird gekauft."""
+    cfg = make_config(tmp_path)
+    event = make_event(received_at=time.monotonic() - 10.5)
+    candidate = make_candidate(event)
+
+    now = time.monotonic()
+    candidate.on_tick(curve_at(4.0), now - 9.0)
+    candidate.on_tick(curve_at(6.0), now - 6.0)
+    candidate.on_tick(curve_at(7.5), now - 3.0)
+    candidate.on_tick(curve_at(8.5), now)
+
+    decision = evaluate_entry(candidate, cfg)
+    assert decision.buy is True, decision.reason
+
+
+def test_momentum_obergrenze_optional(tmp_path):
+    """
+    max_price_gain_in_window_pct ist standardmaessig aus. Wird sie gesetzt,
+    werden zu weit gelaufene Token uebersprungen.
+    """
+    cfg = make_config(tmp_path)
+    candidate = make_candidate_with(sol_in_curve=4.0, gain_source_sol=6.0)
+
+    # Ohne Obergrenze: Kauf
+    assert evaluate_entry(candidate, cfg).buy is True
+
+    # Mit enger Obergrenze: Skip
+    object.__setattr__(cfg.advanced, "max_price_gain_in_window_pct", 10.0)
+    decision = evaluate_entry(candidate, cfg)
+    assert decision.buy is False
+    assert "zu weit gelaufen" in decision.reason
+
+
 # ---------------------------------------------------------------------------
 # Regressionstest zu einem Fehler aus dem echten Betrieb
 # ---------------------------------------------------------------------------
