@@ -13,11 +13,21 @@ REM ===========================================================================
 setlocal
 cd /d "%~dp0"
 
-title pump.fun Paper-Sniper (SIMULATION)
+REM  Fenstertitel bewusst NEUTRAL: welche Betriebsart wirklich laeuft, haengt
+REM  von live_trading in der config.yaml ab. Ein fest eingetragenes
+REM  "(SIMULATION)" waere im Echtgeld-Modus schlicht falsch - und das ist
+REM  genau die Verwechslung, die man hier nicht gebrauchen kann.
+REM  Die Betriebsart steht gross und farbig im Dashboard selbst.
+title pump.fun Sniper
 
 echo.
 echo  ================================================================
-echo   pump.fun PAPER-SNIPER  --  reine Simulation, kein echtes Geld
+echo   pump.fun SNIPER
+echo.
+echo   Betriebsart steht in der config.yaml unter "live_trading":
+echo     false = Simulation ^(kein echtes Geld^)
+echo     true  = ECHTGELD
+echo   Der Bot zeigt sie beim Start noch einmal an.
 echo  ================================================================
 echo.
 
