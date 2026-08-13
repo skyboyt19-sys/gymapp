@@ -47,6 +47,23 @@ class ExitReason:
     SHUTDOWN = "SHUTDOWN"    # Bot wurde beendet (Strg+C)
 
 
+@dataclass(frozen=True)
+class EntrySnapshot:
+    """
+    Die Messwerte, mit denen der Einstieg begruendet wurde.
+
+    Wandert unveraendert in die trades.csv. Ohne diese Zahlen laesst sich
+    hinterher nicht auswerten, was Gewinner von Verlierern unterscheidet -
+    man sieht nur, DASS ein Trade schieflief, nicht unter welchen Bedingungen
+    er eroeffnet wurde.
+    """
+
+    progress_pct: float = 0.0     # Curve-Progress beim Kauf
+    net_buy_sol: float = 0.0      # gemessener Kaufdruck im Signalfenster
+    momentum_pct: float = 0.0     # Kursgewinn im Signalfenster
+    dev_holding_pct: float = 0.0  # Anteil des Erstellers
+
+
 @dataclass
 class Position:
     """Eine offene Paper-Position."""
@@ -72,6 +89,9 @@ class Position:
     peak_price: float = 0.0      # hoechster Kurs seit Einstieg (fuer Trailing)
     partial_done: bool = False   # Teilverkauf schon erfolgt?
     trailing_active: bool = False
+
+    #: Womit der Einstieg begruendet wurde - fuer die Auswertung in trades.csv
+    entry_snapshot: EntrySnapshot = field(default_factory=EntrySnapshot)
 
     #: True, solange ein echter Handelsauftrag zu dieser Position unterwegs
     #: ist. Verhindert, dass der Bot denselben Verkauf mehrfach ausloest,
@@ -253,6 +273,7 @@ class PaperEngine:
         name: str,
         bonding_curve: str,
         state: CurveState,
+        snapshot: EntrySnapshot | None = None,
     ) -> Position | None:
         """
         Simuliert den Kauf und legt die Position an.
@@ -298,6 +319,7 @@ class PaperEngine:
             sol_spent=sol_spent,
             last_price=state.price_sol,
             peak_price=state.price_sol,
+            entry_snapshot=snapshot or EntrySnapshot(),
         )
         self.positions[mint] = position
         self.tokens_sniped += 1
@@ -466,10 +488,12 @@ class PaperEngine:
     # wird daraus ein Auftrag im Hintergrund.
 
     def request_open(self, *, mint: str, symbol: str, name: str,
-                     bonding_curve: str, state: CurveState) -> None:
+                     bonding_curve: str, state: CurveState,
+                     snapshot: EntrySnapshot | None = None) -> None:
         """Kaufauftrag - in der Simulation sofort ausgefuehrt."""
         self.open_position(mint=mint, symbol=symbol, name=name,
-                           bonding_curve=bonding_curve, state=state)
+                           bonding_curve=bonding_curve, state=state,
+                           snapshot=snapshot)
 
     def request_exit(self, position: Position, state: CurveState | None,
                      *, fraction: float, reason: str) -> None:
@@ -517,14 +541,36 @@ class PaperEngine:
         "zeit_utc", "event", "grund", "symbol", "mint",
         "preis_sol", "sol_fluss", "token", "einstieg_sol", "haltedauer_sek",
         "pnl_sol", "pnl_pct", "guthaben_sol",
+        # Womit der Einstieg begruendet wurde - erst damit laesst sich
+        # auswerten, unter welchen Bedingungen Trades funktionieren.
+        "progress_pct", "kaufdruck_sol", "momentum_pct", "dev_anteil_pct",
     ]
 
     def _ensure_csv_header(self) -> None:
-        """Legt trades.csv an (mit Kopfzeile), falls sie noch nicht existiert."""
+        """
+        Legt trades.csv an, falls sie fehlt.
+
+        Stammt eine vorhandene Datei noch von einer aelteren Version mit
+        anderen Spalten, wird sie zur Seite gelegt statt weiterbeschrieben -
+        sonst stuenden in einer Datei Zeilen mit unterschiedlich vielen
+        Spalten, und die Auswertung waere unbrauchbar.
+        """
         try:
-            if not self._csv_path.exists():
-                with self._csv_path.open("w", newline="", encoding="utf-8") as handle:
-                    csv.writer(handle, delimiter=";").writerow(self.CSV_HEADER)
+            if self._csv_path.exists():
+                with self._csv_path.open("r", encoding="utf-8") as handle:
+                    erste_zeile = handle.readline().strip()
+                if erste_zeile and erste_zeile.split(";") != self.CSV_HEADER:
+                    stempel = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    alt = self._csv_path.with_name(
+                        f"{self._csv_path.stem}_alt_{stempel}.csv")
+                    self._csv_path.rename(alt)
+                    log.info("trades.csv hatte ein aelteres Spaltenformat und "
+                             "wurde nach %s umbenannt.", alt.name)
+                else:
+                    return
+
+            with self._csv_path.open("w", newline="", encoding="utf-8") as handle:
+                csv.writer(handle, delimiter=";").writerow(self.CSV_HEADER)
         except OSError as exc:
             log.warning("trades.csv konnte nicht angelegt werden: %s", exc)
 
@@ -555,6 +601,10 @@ class PaperEngine:
                     f"{pnl_sol:.6f}",
                     f"{pnl_pct:.2f}",
                     f"{self.balance_sol:.6f}",
+                    f"{position.entry_snapshot.progress_pct:.2f}",
+                    f"{position.entry_snapshot.net_buy_sol:.4f}",
+                    f"{position.entry_snapshot.momentum_pct:.2f}",
+                    f"{position.entry_snapshot.dev_holding_pct:.2f}",
                 ])
         except OSError as exc:
             # Datei gesperrt (z.B. in Excel geoeffnet) - kein Grund zum Absturz.

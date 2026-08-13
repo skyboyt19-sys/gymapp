@@ -33,7 +33,9 @@ from datetime import datetime, timezone
 
 from .config import Config
 from .curve import CurveState
-from .paper_engine import ClosedTrade, ExitReason, PaperEngine, Position
+from .paper_engine import (
+    ClosedTrade, EntrySnapshot, ExitReason, PaperEngine, Position,
+)
 from .pumpportal_trade import PumpPortalTrader
 from .rpc import SolanaReadOnlyRpc
 
@@ -92,7 +94,8 @@ class LiveEngine(PaperEngine):
         return position is not None and position.pending
 
     def request_open(self, *, mint: str, symbol: str, name: str,
-                     bonding_curve: str, state: CurveState) -> None:
+                     bonding_curve: str, state: CurveState,
+                     snapshot: EntrySnapshot | None = None) -> None:
         """Startet einen Kauf im Hintergrund."""
         if self.emergency_stop or self.is_busy(mint) or mint in self.positions:
             return
@@ -104,7 +107,8 @@ class LiveEngine(PaperEngine):
             return
 
         self._opening.add(mint)
-        self._spawn(self._do_open(mint, symbol, name, bonding_curve, state))
+        self._spawn(self._do_open(mint, symbol, name, bonding_curve, state,
+                                  snapshot or EntrySnapshot()))
 
     def request_exit(self, position: Position, state: CurveState | None,
                      *, fraction: float, reason: str) -> None:
@@ -139,7 +143,8 @@ class LiveEngine(PaperEngine):
     # Kauf
     # ==================================================================
     async def _do_open(self, mint: str, symbol: str, name: str,
-                       bonding_curve: str, state: CurveState) -> None:
+                       bonding_curve: str, state: CurveState,
+                       snapshot: EntrySnapshot | None = None) -> None:
         """Fuehrt den Kauf aus und bucht das tatsaechliche Ergebnis."""
         try:
             size = self.cfg.position_size_sol
@@ -200,6 +205,7 @@ class LiveEngine(PaperEngine):
                 sol_spent=sol_spent,
                 last_price=state.price_sol,
                 peak_price=state.price_sol,
+                entry_snapshot=snapshot or EntrySnapshot(),
             )
             self.positions[mint] = position
             self.tokens_sniped += 1

@@ -230,7 +230,12 @@ class Dashboard:
 
         for trade in reversed(recent):
             table.add_row(
-                trade.closed_wall.strftime("%H:%M:%S"),
+                # In Ortszeit umrechnen. Intern wird UTC gefuehrt (so bleibt die
+                # trades.csv eindeutig), aber in der Anzeige stand die
+                # Trade-Liste damit in einer anderen Zeitzone als die
+                # Ereignis-Zeilen darunter - fuer denselben Moment zwei
+                # verschiedene Uhrzeiten.
+                trade.closed_wall.astimezone().strftime("%H:%M:%S"),
                 trade.symbol,
                 _reason_text(trade.exit_reason),
                 f"{trade.hold_sec:.0f}s",

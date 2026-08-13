@@ -28,7 +28,7 @@ import time
 from .config import Config
 from .curve import CurveState
 from .feed import NewTokenEvent
-from .paper_engine import PaperEngine, Position
+from .paper_engine import EntrySnapshot, PaperEngine, Position
 from .rpc import SolanaReadOnlyRpc
 from .strategy import (
     Candidate,
@@ -296,12 +296,24 @@ class MarketLoop:
         flow.add(now, candidate.last_state.virtual_sol_reserves)
         self.position_flows[candidate.mint] = flow
 
+        # Die Messwerte, die zum Kauf gefuehrt haben, wandern mit in die
+        # trades.csv - sonst kann man hinterher nicht auswerten, unter welchen
+        # Bedingungen Trades funktionieren und unter welchen nicht.
+        snapshot = EntrySnapshot(
+            progress_pct=candidate.last_state.progress_pct(
+                self.cfg.advanced.initial_real_token_reserves),
+            net_buy_sol=candidate.net_buy_volume_sol,
+            momentum_pct=candidate.price_gain_pct,
+            dev_holding_pct=candidate.event.dev_holding_pct,
+        )
+
         self.engine.request_open(
             mint=candidate.mint,
             symbol=candidate.event.symbol,
             name=candidate.event.name,
             bonding_curve=candidate.bonding_curve,
             state=candidate.last_state,
+            snapshot=snapshot,
         )
 
     # ------------------------------------------------------------------
