@@ -38,6 +38,12 @@ class AdvancedConfig:
     net_sell_flip_window_sec: float = 5.0
     net_sell_flip_threshold_sol: float = 0.05
 
+    #: Mindest-Deckung der Position durch echtes SOL in der Kurve.
+    #: 1.0 = der Verkauf braechte genau das, was der Kurs verspricht.
+    #: Normale Reibung (Gebuehr + Slippage) landet bei ca. 0.92.
+    #: Faellt der Wert darunter, ist die Kurve leergezogen.
+    min_liquidity_coverage: float = 0.6
+
     #: Obergrenze fuer das Momentum im Signalfenster. 0 = keine Obergrenze.
     #: Verhindert, dass der Bot die Spitze eines schon gelaufenen Spikes kauft.
     max_price_gain_in_window_pct: float = 0.0
@@ -237,6 +243,8 @@ def _build_advanced(raw: Any) -> AdvancedConfig:
         max_price_gain_in_window_pct=float(
             raw.get("max_price_gain_in_window_pct",
                     defaults.max_price_gain_in_window_pct)),
+        min_liquidity_coverage=float(
+            raw.get("min_liquidity_coverage", defaults.min_liquidity_coverage)),
         initial_real_token_reserves=int(
             raw.get("initial_real_token_reserves", defaults.initial_real_token_reserves)),
         pumpportal_ws_url=str(raw.get("pumpportal_ws_url", defaults.pumpportal_ws_url)),

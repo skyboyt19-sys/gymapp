@@ -74,6 +74,7 @@ Standardmäßig läuft der Bot simuliert. Das Dashboard zeigt:
 | `TRAIL` | Trailing-Stop |
 | `SL` | Stop-Loss (−25 %) |
 | `RUG` | Kurssturz in einem einzigen Tick |
+| `LIQ` | Kurve leergezogen — der Kurs steht, aber es ist kein SOL mehr da, das ausgezahlt werden könnte |
 | `FLIP` | Kaufdruck in Nettoverkäufe gekippt |
 | `TIME` | Harter Zeitstopp (120 s) |
 | `MIGR` | Token zu PumpSwap migriert |
@@ -197,8 +198,9 @@ Mit einem Texteditor öffnen. **Nur die Zahl hinter dem Doppelpunkt ändern, nie
 ### Reihenfolge der Ausstiegsregeln
 
 ```
-1. Migriert  →  2. Rug  →  3. Stop-Loss  →  4. (Teil-)Take-Profit
-            →  5. Trailing  →  6. Net-Sell-Flip  →  7. Hard-Time-Stop
+1. Migriert  →  2. Liquidität weg  →  3. Rug  →  4. Stop-Loss
+            →  5. (Teil-)Take-Profit  →  6. Trailing
+            →  7. Net-Sell-Flip  →  8. Hard-Time-Stop
 ```
 
 Der **Hard-Time-Stop steht bewusst am Ende** — er ist das letzte Wort. Egal was der Kurs macht, nach 120 s wird verkauft.

@@ -356,6 +356,59 @@ def test_kaufdruck_und_progress_passen_zusammen(tmp_path):
 # ---------------------------------------------------------------------------
 # Ausstieg
 # ---------------------------------------------------------------------------
+def test_liquiditaets_notausgang(tmp_path):
+    """
+    Regressionstest zu 9 Trades aus dem echten Betrieb (u.a. ECLIPS, FC, CURWAR):
+    Der Kurs stand nahezu still (-4.5 %, bei FC sogar +5.2 %), die Position war
+    aber zu 100 % wertlos - die Kurve war leergezogen. Der Stop-Loss schaut nur
+    auf den Kurs und griff deshalb nie; die Trades liefen bis zum Zeitstopp.
+    Zusammen 38 % des Gesamtverlusts.
+
+    Nachgestellt mit einer Kurve, deren virtuelle Reserven einen normalen Kurs
+    ergeben, in der aber praktisch kein echtes SOL mehr liegt.
+    """
+    cfg = make_config(tmp_path)
+
+    gesund = curve_at(10.0)
+    leergezogen = decode_bonding_curve(build_account(
+        v_sol=gesund.virtual_sol_reserves,      # Kurs sieht unveraendert aus
+        v_tok=gesund.virtual_token_reserves,
+        r_tok=gesund.real_token_reserves,
+        r_sol=1_000_000,                        # 0.001 SOL - praktisch leer
+    ))
+
+    # Der Kurs ist derselbe - daran wuerde man nichts merken.
+    assert leergezogen.price_sol == pytest.approx(gesund.price_sol)
+
+    position = make_position(entry_price=gesund.price_sol,
+                             last_price=gesund.price_sol)
+
+    # Gesunde Kurve: halten.
+    assert decide_exit(position, gesund, cfg, tick_drop_pct=0.0,
+                       net_flow_sol=0.0).action == "hold"
+
+    # Leergezogene Kurve: sofort raus, obwohl der Kurs unveraendert ist.
+    decision = decide_exit(position, leergezogen, cfg,
+                           tick_drop_pct=0.0, net_flow_sol=0.0)
+    assert decision.action == "close"
+    assert decision.reason == ExitReason.LIQUIDITY
+    assert "Kurve leer" in decision.detail
+
+
+def test_normale_reibung_loest_den_notausgang_nicht_aus(tmp_path):
+    """
+    Gegenprobe: Gebuehr und Slippage druecken die Deckung immer auf ~0.92.
+    Das darf den Notausgang nicht ausloesen, sonst wuerde er staendig feuern.
+    """
+    cfg = make_config(tmp_path)
+    state = curve_at(10.0)
+    position = make_position(entry_price=state.price_sol, last_price=state.price_sol)
+
+    decision = decide_exit(position, state, cfg, tick_drop_pct=0.0, net_flow_sol=0.0)
+
+    assert decision.action == "hold"
+
+
 def test_rug_hat_vorrang_vor_allem(tmp_path):
     """
     Kurs steht +30 % (also im Bereich des Teil-Take-Profits), ist aber gerade

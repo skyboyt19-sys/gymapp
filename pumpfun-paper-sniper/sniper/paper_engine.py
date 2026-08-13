@@ -42,6 +42,7 @@ class ExitReason:
     PARTIAL_TP = "PARTIAL"   # Teilverkauf
     TRAILING = "TRAIL"       # Trailing-Stop
     NET_SELL_FLIP = "FLIP"   # Kaufdruck ist in Nettoverkaeufe gekippt
+    LIQUIDITY = "LIQ"        # Kurve leergezogen: Kurs steht, Auszahlung fehlt
     TIME_STOP = "TIME"       # harter Zeitstopp
     MIGRATED = "MIGR"        # Token ist zu PumpSwap migriert
     SHUTDOWN = "SHUTDOWN"    # Bot wurde beendet (Strg+C)

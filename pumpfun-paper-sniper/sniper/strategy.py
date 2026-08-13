@@ -351,6 +351,35 @@ def decide_exit(
 
     change_pct = position.price_change_pct
 
+    # --- 0b) Liquiditaets-Notausgang --------------------------------------
+    #
+    # Der Kurs einer Bonding Curve wird aus den VIRTUELLEN Reserven gerechnet.
+    # Ausgezahlt werden kann beim Verkauf aber hoechstens das ECHTE SOL, das in
+    # der Kurve liegt. Beides laeuft auseinander, sobald eine Kurve leergezogen
+    # wird: der angezeigte Kurs steht fast still, waehrend real nichts mehr zu
+    # holen ist.
+    #
+    # Im Betrieb waren das 9 von 115 Trades und 38 % des Gesamtverlusts -
+    # Positionen mit -4.5 % Kursaenderung (eine sogar mit +5.2 %), die
+    # trotzdem zu 100 % wertlos waren. Der Stop-Loss schaut nur auf den Kurs
+    # und konnte deshalb nie greifen; die Position lief bis zum Zeitstopp.
+    #
+    # Deshalb wird hier geprueft, wie viel vom rechnerischen Wert der Position
+    # ueberhaupt noch auszahlbar ist. Normale Reibung (Gebuehr + Slippage)
+    # ergibt rund 0.92; faellt die Deckung unter `min_liquidity_coverage`,
+    # ist die Kurve leer und die Position muss sofort raus.
+    # Beide Werte kommen aus DEMSELBEN Kurvenzustand - sonst vergleicht man
+    # einen alten Kurs mit einer neuen Auszahlung und bekommt Unsinn.
+    brutto_laut_kurs = position.tokens * state.price_sol
+    if brutto_laut_kurs > 0:
+        auszahlbar = position.current_token_value(cfg, state)
+        deckung = auszahlbar / brutto_laut_kurs
+        if deckung < cfg.advanced.min_liquidity_coverage:
+            return ExitDecision(
+                "close", ExitReason.LIQUIDITY,
+                detail=f"Kurve leer: nur {deckung * 100:.0f}% des Kurswerts "
+                       f"auszahlbar ({auszahlbar:.4f} SOL)")
+
     # --- 1) Rug: Absturz innerhalb eines einzigen Ticks --------------------
     if tick_drop_pct >= cfg.rug_exit_drop_per_tick_pct:
         return ExitDecision(

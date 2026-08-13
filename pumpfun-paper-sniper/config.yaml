@@ -131,6 +131,23 @@ advanced:
   # Flip-Fenster schon, wird nicht mehr gekauft. Sonst kauft der Bot Spitzen,
   # die gerade kippen, und verkauft sie eine Sekunde spaeter wieder.
 
+  # --- Liquiditaets-Notausgang ---
+  # Der Kurs einer Bonding Curve wird aus den VIRTUELLEN Reserven gerechnet.
+  # Auszahlen kann sie beim Verkauf aber hoechstens das ECHTE SOL, das drin
+  # liegt. Wird eine Kurve leergezogen, steht der Kurs fast still, waehrend
+  # real nichts mehr zu holen ist - der Stop-Loss greift dann nie.
+  # (Im Testbetrieb: 9 von 115 Trades, 38 % des Gesamtverlusts. Positionen mit
+  #  -4.5 % Kursaenderung, eine sogar mit +5.2 %, und trotzdem wertlos.)
+  #
+  # Dieser Wert ist die Mindest-Deckung: Wie viel vom rechnerischen Kurswert
+  # muss beim Verkauf tatsaechlich ankommen?
+  #   1.00 = alles (unrealistisch, Gebuehr und Slippage fehlen immer)
+  #   0.92 = normale Reibung bei den Standardwerten
+  #   0.60 = Standard hier - alles darunter heisst "Kurve ist leer, sofort raus"
+  # Niedriger setzen = spaeter raus. Hoeher als 0.85 nicht sinnvoll, dann
+  # loest die normale Reibung den Ausstieg staendig aus.
+  min_liquidity_coverage: 0.6
+
   # --- Obergrenze fuers Momentum ---
   # Wie weit darf der Kurs im Signalfenster HOECHSTENS gestiegen sein?
   # 0 = keine Obergrenze (Standard).

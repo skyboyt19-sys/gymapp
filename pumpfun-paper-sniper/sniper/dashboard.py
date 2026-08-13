@@ -265,6 +265,7 @@ def _reason_text(reason: str) -> Text:
         "TRAIL": "cyan",
         "SL": "red",
         "RUG": "bold red",
+        "LIQ": "bold red",
         "TIME": "yellow",
         "FLIP": "yellow",
         "MIGR": "magenta",
