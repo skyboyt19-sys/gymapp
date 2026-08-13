@@ -3,6 +3,11 @@
 trades.csv
 session.log
 
+# Die Vorlage dagegen MUSS mit ins Repository: run.bat legt daraus die .env an.
+# Die Regel ".env.*" aus der .gitignore im Hauptordner wuerde sie sonst
+# ausschliessen - diese Zeile nimmt sie wieder aus.
+!.env.example
+
 # Python
 .venv/
 __pycache__/
