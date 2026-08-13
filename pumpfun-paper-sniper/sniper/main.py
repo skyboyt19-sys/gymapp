@@ -39,6 +39,7 @@ from rich.text import Text
 from .config import Config, ConfigError, load_config
 from .dashboard import Dashboard, DashboardLogHandler
 from .feed import NewTokenEvent, PumpPortalFeed
+from .keep_awake import KeepAwake
 from .live_engine import LiveEngine
 from .market import MarketLoop
 from .paper_engine import PaperEngine
@@ -289,6 +290,11 @@ async def run_bot(cfg: Config, verbose: bool) -> None:
     feed = PumpPortalFeed(cfg, queue)
 
     async with AsyncExitStack() as stack:
+        # Solange der Bot laeuft, darf Windows nicht einschlafen. Im
+        # Echtgeld-Modus wuerde das offene Positionen ohne Stop-Loss und ohne
+        # Zeitstopp zuruecklassen.
+        stack.enter_context(KeepAwake(cfg.advanced.prevent_sleep))
+
         rpc = await stack.enter_async_context(SolanaReadOnlyRpc(cfg))
 
         engine: PaperEngine

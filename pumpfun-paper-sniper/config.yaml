@@ -181,6 +181,15 @@ advanced:
   rpc_max_accounts_per_call: 100  # getMultipleAccounts-Limit der meisten RPCs
   rpc_max_consecutive_errors: 50  # danach wird eine Warnung ins Log geschrieben
 
+  # --- Dauerbetrieb ---
+  # Haelt Windows waehrend des Laufs wach. Der Bildschirm darf trotzdem
+  # ausgehen - nur schlafen legen soll sich der Rechner nicht.
+  # Warum das wichtig ist: Im Ruhezustand haelt der Bot an. Im Echtgeld-Modus
+  # liegen die offenen Positionen dann ohne Stop-Loss und ohne Zeitstopp auf
+  # der Wallet, bis du den PC wieder aufweckst.
+  # Nur auf false setzen, wenn du den Ruhezustand bewusst willst.
+  prevent_sleep: true
+
   # --- Aufraeumen ---
   # Kandidaten, die nach dem Signalfenster nicht gekauft wurden, werden
   # verworfen. Dieser Wert ist nur ein Sicherheitsnetz gegen Speicherlecks.

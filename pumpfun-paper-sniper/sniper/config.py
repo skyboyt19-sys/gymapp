@@ -65,6 +65,10 @@ class AdvancedConfig:
     # Housekeeping
     candidate_max_lifetime_sec: float = 120.0
 
+    #: Windows waehrend des Betriebs am Einschlafen hindern. Ohne das haelt
+    #: der Bot im Ruhezustand an - im Echtgeld-Modus mit offenen Positionen.
+    prevent_sleep: bool = True
+
     # Dashboard
     dashboard_refresh_per_sec: int = 4
     dashboard_max_closed_rows: int = 8
@@ -260,6 +264,7 @@ def _build_advanced(raw: Any) -> AdvancedConfig:
             raw.get("rpc_max_consecutive_errors", defaults.rpc_max_consecutive_errors)),
         candidate_max_lifetime_sec=float(
             raw.get("candidate_max_lifetime_sec", defaults.candidate_max_lifetime_sec)),
+        prevent_sleep=bool(raw.get("prevent_sleep", defaults.prevent_sleep)),
         dashboard_refresh_per_sec=int(
             raw.get("dashboard_refresh_per_sec", defaults.dashboard_refresh_per_sec)),
         dashboard_max_closed_rows=int(

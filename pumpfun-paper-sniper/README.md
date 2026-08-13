@@ -192,6 +192,49 @@ verliert er danach genauso. Deshalb:
 
 ---
 
+# Teil 4c — Dauerbetrieb: muss der PC anbleiben?
+
+**Ja.** Der Bot braucht durchgehend Internet — er hängt am Live-Feed und fragt
+jede 0,8 Sekunden Kurse von der Blockchain ab. Offline gibt es nichts zu
+handeln.
+
+Der **Bildschirm darf aber aus sein**. Nur schlafen legen darf sich der
+Rechner nicht.
+
+### Das erledigt der Bot selbst
+
+Solange er läuft, sagt er Windows „bitte nicht einschlafen" (Einstellung
+`advanced.prevent_sleep`, standardmäßig an). Beim Beenden gibt er die Sperre
+wieder frei.
+
+**Warum das wichtig ist:** Geht der PC in den Ruhezustand, hält der Bot an.
+Im Echtgeld-Modus liegen die offenen Positionen dann ohne Stop-Loss, ohne
+Trailing und ohne Zeitstopp auf der Wallet — bis du den Rechner wieder
+aufweckst. Ein Token kann in der Zeit auf null gehen, ohne dass irgendetwas
+reagiert.
+
+### Was der Bot nicht verhindern kann
+
+* **Zugeklapptes Notebook** — löst je nach Einstellung trotzdem den
+  Ruhezustand aus. Unter *Einstellungen → System → Netzbetrieb und
+  Energiesparen → Bildschirm und Ruhezustand* auf „Nie" stellen, und bei
+  Notebooks zusätzlich in der Systemsteuerung *„Auswählen, was beim Zuklappen
+  des Deckels geschehen soll" → „Nichts tun"*.
+* **Stromausfall, Windows-Update, Absturz.** Passiert im Echtgeld-Modus:
+  danach `panic_sell.bat` starten, um liegengebliebene Token loszuwerden.
+
+### Wirklich 24/7 ohne eigenen PC
+
+Dafür bräuchtest du einen kleinen Server (VPS) für etwa 4–6 € im Monat, der
+durchläuft. Der Bot ist reines Python und läuft auf Linux genauso — die
+`.bat`-Dateien sind nur die Windows-Startknöpfe.
+
+Ehrlich gesagt ist das aber ein deutlicher Sprung: Du arbeitest dort über eine
+Kommandozeile, ohne Explorer und ohne Doppelklick. Solange du in der
+Simulation Daten sammelst, tut es dein PC genauso gut.
+
+---
+
 # Teil 5 — Einstellungen (`config.yaml`)
 
 Mit einem Texteditor öffnen. **Nur die Zahl hinter dem Doppelpunkt ändern, niemals Tabulatoren benutzen.** Änderungen greifen nach einem Neustart.
