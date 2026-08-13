@@ -167,6 +167,31 @@ Brauchst du, wenn:
 
 ---
 
+# Teil 4b — Auswertung
+
+**Doppelklick auf `auswertung.bat`**
+
+Liest die `trades.csv` und zeigt, woran es liegt: Gesamtergebnis, welche
+Trefferquote die Strategie überhaupt bräuchte, welcher Ausstiegsgrund das
+meiste Geld kostet — und, sofern die Daten aus einer aktuellen Version stammen,
+unter welchen **Einstiegsbedingungen** es funktioniert hat (Curve-Progress,
+Momentum, Kaufdruck, Dev-Anteil).
+
+Kann jederzeit laufen, auch während der Bot in einem anderen Fenster arbeitet.
+
+**Wichtig beim Benutzen:** Die Versuchung ist groß, jetzt so lange an den
+Filtern zu drehen, bis diese eine Datei ein Plus zeigt. Das ist kein besserer
+Bot, sondern nur einer, der die Vergangenheit auswendig gelernt hat — live
+verliert er danach genauso. Deshalb:
+
+* Nur Gruppen mit mindestens ~20 Trades ernst nehmen (das Skript markiert zu
+  kleine).
+* Nur deutliche Unterschiede übernehmen, nicht jede kleine Abweichung.
+* Nach jeder Änderung einen **neuen** Lauf abwarten und dort prüfen, ob der
+  Effekt bleibt. Nur das zählt.
+
+---
+
 # Teil 5 — Einstellungen (`config.yaml`)
 
 Mit einem Texteditor öffnen. **Nur die Zahl hinter dem Doppelpunkt ändern, niemals Tabulatoren benutzen.** Änderungen greifen nach einem Neustart.
@@ -324,6 +349,7 @@ pumpfun-paper-sniper/
 ├── run.bat              ← Bot starten
 ├── check_feed.bat       ← nur den Feed testen
 ├── panic_sell.bat       ← Notverkauf: alles glattstellen
+├── auswertung.bat       ← trades.csv auswerten
 ├── config.yaml          ← alle Einstellungen
 ├── .env.example         ← Vorlage für RPC-URL und API-Key
 │
