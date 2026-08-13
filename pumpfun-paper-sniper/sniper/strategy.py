@@ -100,13 +100,31 @@ class FlowTracker:
 # ---------------------------------------------------------------------------
 @dataclass
 class Candidate:
-    """Ein neuer Token, der gerade beobachtet (aber noch nicht gekauft) wird."""
+    """
+    Ein neuer Token, der gerade beobachtet (aber noch nicht gekauft) wird.
+
+    WICHTIG zu den Startwerten
+    --------------------------
+    `start_price` und `start_sol_reserves` werden beim ERSTEN Kursabruf von der
+    Blockchain gesetzt - nicht aus dem Feed-Event.
+
+    Das war urspruenglich anders und hat zu falschen Messwerten gefuehrt: Der
+    Startwert kam aus dem Event (`vSolInBondingCurve`), alle weiteren Werte von
+    der Kette. Zwei verschiedene Quellen voneinander abzuziehen ergibt keinen
+    sinnvollen Fluss - im Betrieb meldete der Bot dadurch z.B. "13,10 SOL
+    Kaufdruck" bei einem Token, dessen Kurve laut Progress nur ~1,3 SOL
+    enthalten konnte.
+
+    Regel daraus: Deltas immer aus derselben Quelle bilden. Der Preis am
+    Fensteranfang kostet so zwar bis zu einen Poll-Zyklus Verzoegerung, ist
+    dafuer aber mit allen spaeteren Messwerten vergleichbar.
+    """
 
     event: NewTokenEvent
-    #: Preis zu Beginn des Fensters (aus dem Feed-Event, spart einen RPC-Call)
-    start_price: float
-    #: SOL-Reserve zu Beginn des Fensters, in Lamports
-    start_sol_reserves: int
+    #: Preis beim ersten Kursabruf. 0.0, solange noch keiner vorliegt.
+    start_price: float = 0.0
+    #: SOL-Reserve beim ersten Kursabruf (Lamports). None = noch keine Messung.
+    start_sol_reserves: int | None = None
     flow: FlowTracker = field(default_factory=FlowTracker)
 
     last_state: CurveState | None = None
@@ -128,13 +146,23 @@ class Candidate:
         return time.monotonic() - self.event.received_at
 
     def on_tick(self, state: CurveState, now: float) -> None:
-        """Neuen Kurs-Messpunkt aufnehmen."""
+        """
+        Neuen Kurs-Messpunkt aufnehmen. Der erste Messpunkt legt gleichzeitig
+        die Vergleichsbasis fuer Kaufdruck und Momentum fest.
+        """
         self.last_state = state
         self.ticks += 1
+
         price = state.price_sol
         if price > 0:
             self.last_price = price
             self.max_price = max(self.max_price, price)
+            if self.start_price <= 0:
+                self.start_price = price
+
+        if self.start_sol_reserves is None:
+            self.start_sol_reserves = state.virtual_sol_reserves
+
         self.flow.add(now, state.virtual_sol_reserves)
 
     @property
@@ -146,7 +174,12 @@ class Candidate:
 
     @property
     def net_buy_volume_sol(self) -> float:
-        """Netto in die Kurve geflossenes SOL seit Fensterbeginn."""
+        """
+        Netto in die Kurve geflossenes SOL seit dem ersten Messpunkt.
+        0.0, solange noch keine Vergleichsbasis vorliegt.
+        """
+        if self.start_sol_reserves is None:
+            return 0.0
         return self.flow.total_flow_sol(self.start_sol_reserves)
 
 
@@ -154,15 +187,11 @@ def make_candidate(event: NewTokenEvent) -> Candidate:
     """
     Baut aus einem Feed-Event einen Kandidaten.
 
-    Der Startpreis und die Start-Reserve kommen direkt aus dem Event - so
-    beginnt die Messung sofort beim Launch und nicht erst beim ersten
-    RPC-Poll (das waere bis zu `rpc_poll_ms` spaeter).
+    Die Vergleichswerte fuer Kaufdruck und Momentum werden bewusst NICHT aus
+    dem Event uebernommen, sondern beim ersten Kursabruf von der Kette gesetzt
+    (siehe Docstring von `Candidate`).
     """
-    return Candidate(
-        event=event,
-        start_price=event.initial_price_sol,
-        start_sol_reserves=int(event.v_sol * LAMPORTS_PER_SOL),
-    )
+    return Candidate(event=event)
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +217,11 @@ def evaluate_entry(candidate: Candidate, cfg: Config) -> EntryDecision:
         return EntryDecision(False, "keine Kursdaten (RPC)")
     if candidate.last_price <= 0:
         return EntryDecision(False, "kein gueltiger Preis")
+
+    # 0b) Mindestens zwei Messpunkte, sonst gibt es keine Veraenderung zu
+    #     messen - Kaufdruck und Momentum waeren beide zwangslaeufig 0.
+    if candidate.ticks < 2 or candidate.start_sol_reserves is None:
+        return EntryDecision(False, f"zu wenig Messpunkte ({candidate.ticks})")
 
     # 1) Migriert / abgeschlossen?
     if cfg.skip_if_complete and not state.is_tradable:

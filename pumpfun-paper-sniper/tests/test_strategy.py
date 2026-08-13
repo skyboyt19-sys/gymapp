@@ -201,6 +201,87 @@ def test_skip_ohne_kursdaten(tmp_path):
     assert "RPC" in decision.reason
 
 
+def test_skip_bei_nur_einem_messpunkt(tmp_path):
+    """Mit einem einzigen Messpunkt gibt es keine Veraenderung zu messen."""
+    cfg = make_config(tmp_path)
+    candidate = make_candidate(make_event())
+    candidate.on_tick(curve_at(5.0), time.monotonic())
+
+    decision = evaluate_entry(candidate, cfg)
+
+    assert decision.buy is False
+    assert "Messpunkte" in decision.reason
+
+
+# ---------------------------------------------------------------------------
+# Regressionstest zu einem Fehler aus dem echten Betrieb
+# ---------------------------------------------------------------------------
+def test_kaufdruck_ignoriert_die_werte_aus_dem_feed_event(tmp_path):
+    """
+    Kaufdruck und Momentum muessen ausschliesslich aus Kettendaten stammen.
+
+    Hintergrund: Zuerst kam der Startwert aus dem Feed-Event
+    (`vSolInBondingCurve`), alle weiteren Werte von der Blockchain. Was
+    PumpPortal in dem Feld liefert, deckt sich aber nicht mit dem
+    `virtual_sol_reserves` des Bonding-Curve-Accounts - die Differenz war
+    damit wertlos. Im Betrieb meldete der Bot dadurch "13,10 SOL Kaufdruck"
+    bei einer Kurve, in der laut Curve-Progress nur ~1,3 SOL stecken konnten,
+    und kaufte massenhaft Schrott.
+
+    Dieser Test setzt das Event bewusst auf voellig andere Werte als die Kette.
+    Gemessen werden darf nur die Bewegung auf der Kette.
+    """
+    cfg = make_config(tmp_path)
+
+    # Das Event behauptet Unsinn (18 SOL in der Kurve, ganz anderer Preis).
+    event = make_event(
+        v_sol=18.0,
+        v_tokens=500_000_000.0,
+        received_at=time.monotonic() - 10.5,
+    )
+    candidate = make_candidate(event)
+
+    # Die Kette sagt: 5.0 SOL drin, dann kommen 0.4 SOL dazu.
+    now = time.monotonic()
+    candidate.on_tick(curve_at(5.0), now - 1.0)
+    candidate.on_tick(curve_at(5.4), now)
+
+    # Kaufdruck = genau die 0.4 SOL von der Kette, nicht die Differenz
+    # zum erfundenen Event-Wert (die waere ~17 SOL gewesen).
+    assert candidate.net_buy_volume_sol == pytest.approx(0.4, abs=0.01)
+
+    # Momentum ebenso: gerechnet von Kettenpreis zu Kettenpreis.
+    erwartet = (curve_at(5.4).price_sol / curve_at(5.0).price_sol - 1.0) * 100.0
+    assert candidate.price_gain_pct == pytest.approx(erwartet, rel=1e-9)
+
+    # Und in der Gesamtentscheidung schlaegt sich das nieder: 0.4 SOL
+    # Kaufdruck reicht nicht (Mindestwert 1.5).
+    decision = evaluate_entry(candidate, cfg)
+    assert decision.buy is False
+    assert "Kaufdruck" in decision.reason
+
+
+def test_kaufdruck_und_progress_passen_zusammen(tmp_path):
+    """
+    Plausibilitaetsprobe: Der gemessene Kaufdruck darf nie groesser sein als
+    das SOL, das laut Curve-Progress ueberhaupt in der Kurve stecken kann.
+    Genau diese Bedingung war im Fehlerfall verletzt.
+    """
+    candidate = make_candidate(make_event())
+    now = time.monotonic()
+    candidate.on_tick(curve_at(0.0), now - 1.0)   # frische Kurve
+    candidate.on_tick(curve_at(3.0), now)         # 3 SOL sind zugeflossen
+
+    state = candidate.last_state
+    assert state is not None
+
+    kaufdruck = candidate.net_buy_volume_sol
+    sol_in_der_kurve = state.real_sol          # was tatsaechlich drin liegt
+
+    assert kaufdruck == pytest.approx(3.0, abs=0.01)
+    assert kaufdruck <= sol_in_der_kurve + 0.01
+
+
 # ---------------------------------------------------------------------------
 # Ausstieg
 # ---------------------------------------------------------------------------

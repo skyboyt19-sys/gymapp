@@ -281,11 +281,20 @@ class MarketLoop:
         assert candidate.last_state is not None  # von evaluate_entry garantiert
         log.info("SNIPE %s: %s", candidate.event.symbol, decision.reason)
 
-        # Fluss-Historie aus dem Beobachtungsfenster uebernehmen, damit der
-        # Net-Sell-Flip sofort ab dem ersten Tick nach dem Kauf funktioniert.
+        # Der Net-Sell-Flip bekommt eine FRISCHE Fluss-Historie, die beim
+        # Einstieg beginnt.
+        #
+        # Vorher wurde die Historie aus dem Beobachtungsfenster uebernommen -
+        # mit der Folge, dass der Flip schon beim allerersten Tick nach dem Kauf
+        # ausloesen konnte, obwohl er sich auf Bewegungen von VOR dem Kauf
+        # bezog. Im Betrieb fuehrte das zu Trades, die nach einer Sekunde
+        # wieder geschlossen waren und nur doppelte Gebuehren gekostet haben.
+        #
         # Muss VOR dem Kaufauftrag passieren: im Echtgeld-Modus laeuft der Kauf
         # im Hintergrund, und die Position existiert erst danach.
-        self.position_flows[candidate.mint] = candidate.flow
+        flow = FlowTracker()
+        flow.add(now, candidate.last_state.virtual_sol_reserves)
+        self.position_flows[candidate.mint] = flow
 
         self.engine.request_open(
             mint=candidate.mint,
