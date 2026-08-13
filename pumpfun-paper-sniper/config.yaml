@@ -1,0 +1,104 @@
+# =============================================================================
+#  pump.fun PAPER-SNIPER  --  Konfiguration
+# =============================================================================
+#  Diese Datei steuert den kompletten Bot. Du kannst sie mit jedem Texteditor
+#  oeffnen (Notepad, Notepad++, VS Code ...) und Werte aendern.
+#
+#  WICHTIG:
+#   * Nur die Zahl hinter dem Doppelpunkt aendern, nie den Namen davor.
+#   * Keine Tabs benutzen, nur Leerzeichen (YAML mag keine Tabs).
+#   * Nach dem Speichern den Bot neu starten, damit die Aenderung greift.
+#
+#  Der Bot handelt AUSSCHLIESSLICH mit virtuellem Geld. Es gibt in diesem
+#  Programm keinen einzigen Code-Pfad, der eine echte Transaktion senden
+#  koennte. Es wird nie nach einem Private Key oder einer Seed Phrase gefragt.
+# =============================================================================
+
+
+# ---- Konto / Groesse --------------------------------------------------------
+start_balance_sol: 10.0        # virtuelles Startguthaben
+position_size_sol: 0.15        # Einsatz pro Snipe
+max_open_positions: 4
+max_snipes_per_min: 8          # Rate-Limit gegen Overtrading
+
+# ---- Signalfenster ----------------------------------------------------------
+signal_window_sec: 10          # so lange beobachten, bevor gekauft wird
+
+# ---- Einstiegs-Filter (alle muessen passen) ---------------------------------
+max_token_age_sec: 45          # nur ganz frische Token snipern
+min_curve_progress_pct: 1      # nicht bei totem 0%-Start
+max_curve_progress_pct: 40     # frueh rein, nicht wenn schon gelaufen
+min_net_buy_volume_sol: 1.5    # Kaufdruck im Fenster (aus Reserve-Delta)
+min_price_gain_in_window_pct: 8 # Momentum: Preis zieht im Fenster an
+max_dev_holding_pct: 10        # Dev-Anteil (aus initialem Dev-Buy)
+skip_if_complete: true         # migrierte Token ignorieren
+
+# ---- Ausstieg (kurzfristig!) ------------------------------------------------
+hard_time_stop_sec: 120        # <<< Zwangsverkauf nach 2 Min - nie laenger halten
+take_profit_pct: 40
+partial_take_profit_pct: 25    # Haelfte bei +25% rausnehmen ...
+partial_take_profit_size: 0.5  # ... 50% der Position
+stop_loss_pct: 25              # eng
+trailing_activate_pct: 20      # ab +20% Gewinn Trailing an
+trailing_distance_pct: 15
+rug_exit_drop_per_tick_pct: 20 # bei ploetzlichem Absturz sofort raus
+exit_on_net_sell_flip: true    # wenn Kaufdruck in Nettoverkaeufe kippt -> raus
+
+# ---- Ausfuehrungs-Simulation ------------------------------------------------
+fee_pct: 1.0
+slippage_pct: 3.0
+simulated_priority_fee_sol: 0.0005
+rpc_poll_ms: 800               # Kurs-Refresh fuer offene Positionen
+
+
+# =============================================================================
+#  AB HIER: Feineinstellungen. Die Defaults passen fuer den Normalbetrieb.
+#  Du musst hier nichts aendern - es ist nur da, falls du spaeter schrauben
+#  willst. Jede Zeile ist erklaert.
+# =============================================================================
+advanced:
+
+  # --- Net-Sell-Flip (gehoert zu exit_on_net_sell_flip oben) ---
+  # Der Bot schaut sich an, wie viel SOL in den letzten X Sekunden NETTO in
+  # die Bonding Curve geflossen ist. Wird daraus ein Abfluss (= es wird mehr
+  # verkauft als gekauft), gilt der Kaufdruck als gekippt.
+  net_sell_flip_window_sec: 5.0     # Beobachtungsfenster in Sekunden
+  net_sell_flip_threshold_sol: 0.05 # erst ab diesem Abfluss zaehlt es als Flip
+                                    # (verhindert Fehlalarm bei Mini-Verkaeufen)
+
+  # --- Curve-Progress ---
+  # progress = 1 - (realTokenReserves / initial_real_token_reserves)
+  # 793_100_000_000_000 ist der aktuelle pump.fun-Standardwert (in Basis-
+  # einheiten, Token haben 6 Nachkommastellen). Nur aendern, wenn pump.fun
+  # die Kurven-Parameter umstellt.
+  initial_real_token_reserves: 793100000000000
+
+  # --- Feed ---
+  # WebSocket von PumpPortal (kostenlos, kein API-Key noetig).
+  pumpportal_ws_url: "wss://pumpportal.fun/api/data"
+  # pump.fun-Launches kommen ueber pool "pump". PumpPortal meldet inzwischen
+  # auch andere Launchpads (z.B. "bonk"). Deren Bonding Curve hat ein anderes
+  # Layout, deshalb ignoriert der Bot sie. Leere Liste = alles zulassen.
+  allowed_pools: ["pump"]
+  # Reconnect-Backoff in Sekunden (start, maximum)
+  ws_reconnect_min_sec: 1.0
+  ws_reconnect_max_sec: 30.0
+
+  # --- RPC ---
+  rpc_timeout_sec: 10.0        # Timeout pro RPC-Anfrage
+  rpc_max_accounts_per_call: 100  # getMultipleAccounts-Limit der meisten RPCs
+  rpc_max_consecutive_errors: 50  # danach wird eine Warnung ins Log geschrieben
+
+  # --- Aufraeumen ---
+  # Kandidaten, die nach dem Signalfenster nicht gekauft wurden, werden
+  # verworfen. Dieser Wert ist nur ein Sicherheitsnetz gegen Speicherlecks.
+  candidate_max_lifetime_sec: 120
+
+  # --- Dashboard ---
+  dashboard_refresh_per_sec: 4 # Bildwiederholrate der Konsolen-Anzeige
+  dashboard_max_closed_rows: 8 # so viele der letzten Trades anzeigen
+  dashboard_max_log_rows: 6    # so viele Log-Zeilen unten anzeigen
+
+  # --- Dateien (relativ zum Projektordner) ---
+  trades_csv: "trades.csv"
+  session_log: "session.log"

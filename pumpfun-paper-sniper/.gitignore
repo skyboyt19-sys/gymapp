@@ -1,0 +1,10 @@
+# Laufzeitdateien des Bots - gehoeren nicht ins Repository
+.env
+trades.csv
+session.log
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/

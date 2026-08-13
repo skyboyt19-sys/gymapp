@@ -1,0 +1,19 @@
+# Abhaengigkeiten des pump.fun Paper-Snipers.
+# Installation (Windows):  pip install -r requirements.txt
+#
+# Bewusst KEINE Wallet-/Signier-Bibliothek: der Bot kann technisch keine
+# Transaktion bauen oder senden.
+
+websockets>=12.0        # WebSocket-Client fuer den PumpPortal-Feed
+httpx>=0.27             # async HTTP-Client fuer die Solana-RPC-Calls
+rich>=13.7              # Live-Dashboard in der Konsole
+PyYAML>=6.0             # liest config.yaml
+python-dotenv>=1.0      # liest die RPC-URL aus der .env-Datei
+
+# Optional, aber empfohlen: nur fuer das Ableiten der Bonding-Curve-Adresse
+# aus der Mint-Adresse (Fallback, falls der Feed den Key mal nicht mitliefert).
+# Der Bot laeuft auch ohne solders - dann wird der Fallback uebersprungen.
+solders>=0.21
+
+# Nur fuer die Tests (python -m pytest). Fuer den Betrieb nicht noetig.
+pytest>=8.0
