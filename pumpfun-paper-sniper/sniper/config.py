@@ -66,6 +66,36 @@ class AdvancedConfig:
 
 
 @dataclass(frozen=True)
+class LiveConfig:
+    """Einstellungen, die nur im Echtgeld-Modus greifen."""
+
+    #: Not-Aus: bei diesem Verlust in Prozent des Startkapitals schaltet der
+    #: Bot ab (offene Positionen werden vorher verkauft). 0 = aus.
+    max_total_loss_pct: float = 30.0
+
+    #: Slippage-Toleranz, die an PumpPortal uebergeben wird. Achtung: das ist
+    #: NICHT `slippage_pct` aus der Simulation. Hier ist es die Obergrenze,
+    #: ab der die Transaktion abgelehnt wird. Zu niedrig = viele
+    #: fehlgeschlagene Snipes, zu hoch = schlechte Fills.
+    order_slippage_pct: float = 15.0
+
+    #: Priority Fee pro Transaktion in SOL. Hoeher = schneller im Block, aber
+    #: teurer. Bei kleinen Positionen ist das der groesste Kostenblock.
+    priority_fee_sol: float = 0.0005
+
+    #: Wie lange auf die Blockchain-Bestaetigung eines Auftrags gewartet wird.
+    fill_confirm_timeout_sec: float = 25.0
+    fill_poll_interval_sec: float = 1.0
+
+    #: Es wird nicht gekauft, wenn danach weniger als dieser Betrag auf der
+    #: Wallet bliebe (Reserve fuer Transaktionsgebuehren).
+    min_wallet_balance_sol: float = 0.02
+
+    #: Countdown in Sekunden vor dem ersten echten Trade (Abbruch mit STRG+C).
+    startup_countdown_sec: int = 8
+
+
+@dataclass(frozen=True)
 class Config:
     """Alle Einstellungen des Bots (Hauptblock der config.yaml)."""
 
@@ -104,8 +134,17 @@ class Config:
     simulated_priority_fee_sol: float
     rpc_poll_ms: int
 
+    # ---- Betriebsart ----
+    #: False = reine Simulation (Standard). True = ECHTES GELD.
+    live_trading: bool = False
+    live: LiveConfig = field(default_factory=LiveConfig)
+
     # ---- Laufzeitwerte (nicht aus der YAML) ----
     rpc_url: str = DEFAULT_RPC_URL
+    #: PumpPortal-API-Key aus der .env - nur im Echtgeld-Modus noetig.
+    pumpportal_api_key: str = ""
+    #: Public Key der Bot-Wallet aus der .env - nur im Echtgeld-Modus noetig.
+    bot_wallet_pubkey: str = ""
     advanced: AdvancedConfig = field(default_factory=AdvancedConfig)
 
     # -- abgeleitete Hilfswerte -------------------------------------------
@@ -217,6 +256,40 @@ def _build_advanced(raw: Any) -> AdvancedConfig:
     )
 
 
+def _build_live(raw: Any) -> LiveConfig:
+    """Baut den `live:`-Block. Fehlt er, gelten die Defaults."""
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ConfigError("Der Block 'live:' in der config.yaml ist fehlerhaft.")
+
+    defaults = LiveConfig()
+    live = LiveConfig(
+        max_total_loss_pct=float(
+            raw.get("max_total_loss_pct", defaults.max_total_loss_pct)),
+        order_slippage_pct=float(
+            raw.get("order_slippage_pct", defaults.order_slippage_pct)),
+        priority_fee_sol=float(
+            raw.get("priority_fee_sol", defaults.priority_fee_sol)),
+        fill_confirm_timeout_sec=float(
+            raw.get("fill_confirm_timeout_sec", defaults.fill_confirm_timeout_sec)),
+        fill_poll_interval_sec=float(
+            raw.get("fill_poll_interval_sec", defaults.fill_poll_interval_sec)),
+        min_wallet_balance_sol=float(
+            raw.get("min_wallet_balance_sol", defaults.min_wallet_balance_sol)),
+        startup_countdown_sec=int(
+            raw.get("startup_countdown_sec", defaults.startup_countdown_sec)),
+    )
+
+    if not 0.0 <= live.max_total_loss_pct <= 100.0:
+        raise ConfigError("live.max_total_loss_pct muss zwischen 0 und 100 liegen.")
+    if not 0.0 < live.order_slippage_pct <= 100.0:
+        raise ConfigError("live.order_slippage_pct muss zwischen 0 und 100 liegen.")
+    if live.priority_fee_sol < 0:
+        raise ConfigError("live.priority_fee_sol darf nicht negativ sein.")
+    return live
+
+
 def load_config(config_path: Path | None = None,
                 env_path: Path | None = None) -> Config:
     """
@@ -298,13 +371,54 @@ def load_config(config_path: Path | None = None,
         simulated_priority_fee_sol=_as_float(data, "simulated_priority_fee_sol",
                                              minimum=0.0),
         rpc_poll_ms=_as_int(data, "rpc_poll_ms", minimum=100),
+        # Betriebsart: fehlt der Eintrag, wird bewusst simuliert.
+        # Echtgeld muss man ausdruecklich einschalten, nie aus Versehen.
+        live_trading=bool(data.get("live_trading", False)),
+        live=_build_live(data.get("live")),
         # Laufzeit
         rpc_url=rpc_url,
+        pumpportal_api_key=(os.getenv("PUMPPORTAL_API_KEY") or "").strip(),
+        bot_wallet_pubkey=(os.getenv("BOT_WALLET_PUBKEY") or "").strip(),
         advanced=_build_advanced(data.get("advanced")),
     )
 
     _check_plausibility(cfg)
+    _check_live_requirements(cfg)
     return cfg
+
+
+def _check_live_requirements(cfg: Config) -> None:
+    """
+    Im Echtgeld-Modus muessen API-Key und Wallet-Adresse vorhanden sein.
+    Lieber jetzt ein klarer Fehler als ein halb gestarteter Bot, der beim
+    ersten Kauf abbricht.
+    """
+    if not cfg.live_trading:
+        return
+
+    if not cfg.pumpportal_api_key:
+        raise ConfigError(
+            "ECHTGELD-Modus ist eingeschaltet (live_trading: true), aber in der "
+            ".env fehlt PUMPPORTAL_API_KEY.\n"
+            "Den Key bekommst du auf https://pumpportal.fun/ unter "
+            "'Lightning Transaction API', wenn du dort eine Wallet anlegst."
+        )
+    if not cfg.bot_wallet_pubkey:
+        raise ConfigError(
+            "ECHTGELD-Modus ist eingeschaltet (live_trading: true), aber in der "
+            ".env fehlt BOT_WALLET_PUBKEY.\n"
+            "Das ist die oeffentliche Adresse der Bot-Wallet - PumpPortal zeigt "
+            "sie dir an, wenn du den API-Key erstellst. Sie ist nicht geheim; "
+            "der Bot braucht sie nur, um Kontostaende zu pruefen."
+        )
+    # Grobe Plausibilitaet: Solana-Adressen sind Base58, 32-44 Zeichen.
+    if not 32 <= len(cfg.bot_wallet_pubkey) <= 44:
+        raise ConfigError(
+            f"BOT_WALLET_PUBKEY sieht nicht wie eine Solana-Adresse aus "
+            f"({len(cfg.bot_wallet_pubkey)} Zeichen, erwartet 32-44). "
+            "Bitte die oeffentliche Adresse der Bot-Wallet eintragen - "
+            "NICHT den API-Key und erst recht keinen Private Key."
+        )
 
 
 def _check_plausibility(cfg: Config) -> None:

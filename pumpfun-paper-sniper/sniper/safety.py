@@ -45,6 +45,26 @@ ALLOWED_RPC_METHODS = frozenset(
         "getHealth",
         "getSlot",
         "getVersion",
+        # Kontostaende der Bot-Wallet (nur lesen). Wird im Echtgeld-Modus
+        # gebraucht, um Fills und den Not-Aus zu pruefen.
+        "getBalance",
+        "getTokenAccountsByOwner",
+        # Liest eine bereits gesendete Transaktion nach, um den exakten
+        # Geldfluss zu ermitteln. Reines Nachschlagen, kein Senden.
+        "getTransaction",
+    }
+)
+
+#: Methoden, mit denen man eine Transaktion senden koennte. Sie stehen hier
+#: nur, damit klar dokumentiert ist, dass sie NIE erlaubt sind - der Bot
+#: signiert grundsaetzlich nichts selbst. Im Echtgeld-Modus laeuft das Signieren
+#: bei PumpPortal (Lightning-API), nicht in diesem Programm.
+FOREVER_FORBIDDEN_RPC_METHODS = frozenset(
+    {
+        "sendTransaction",
+        "sendRawTransaction",
+        "requestAirdrop",
+        "simulateTransaction",
     }
 )
 
@@ -69,15 +89,19 @@ def find_wallet_secrets_in_env() -> list[str]:
     return sorted(found)
 
 
-def assert_paper_only() -> None:
+def assert_no_private_keys() -> None:
     """
-    Startpruefung. Bricht mit `SafetyViolation` ab, wenn in der Umgebung ein
-    Wallet-Geheimnis liegt.
+    Startpruefung - laeuft in BEIDEN Betriebsarten (Simulation und Echtgeld).
 
-    Hintergrund: Dieser Bot soll nie in die Naehe von echtem Geld kommen. Wenn
-    auf dem Rechner ein Key in der .env liegt, ist das ein Zeichen dafuer, dass
-    hier vorher ein echter Trading-Bot lief - dann wird lieber gestoppt und der
-    Nutzer informiert.
+    Dieser Bot signiert grundsaetzlich nichts selbst:
+      * Im Simulationsmodus wird ueberhaupt nicht gehandelt.
+      * Im Echtgeld-Modus signiert PumpPortal (Lightning-API) mit der dort
+        hinterlegten Bot-Wallet. Der Bot braucht dafuer nur einen API-Key.
+
+    In beiden Faellen gibt es also keinen Grund, warum ein Private Key oder
+    eine Seed Phrase auf diesem Rechner in der Bot-Umgebung liegen sollte.
+    Findet sich doch einer, wird der Start verweigert - denn dann stimmt die
+    Annahme nicht mehr, unter der dieses Programm gebaut wurde.
     """
     secrets = find_wallet_secrets_in_env()
     if secrets:
@@ -86,11 +110,15 @@ def assert_paper_only() -> None:
             "In der Umgebung (.env oder Windows-Umgebungsvariablen) wurden "
             "Variablen gefunden, die nach einem Wallet-Geheimnis aussehen:\n"
             + "\n".join(f"  - {name}" for name in secrets)
-            + "\n\nDieser Bot ist ein reiner Simulator und darf niemals in der "
-            "Naehe eines echten Keys laufen.\n"
-            "Bitte entferne diese Eintraege aus deiner .env (bzw. aus den "
-            "Windows-Umgebungsvariablen) und starte erneut."
+            + "\n\nDieser Bot braucht so etwas nie: Er signiert nichts selbst.\n"
+            "Im Echtgeld-Modus uebernimmt das PumpPortal mit deinem API-Key -\n"
+            "dafuer genuegt PUMPPORTAL_API_KEY in der .env.\n\n"
+            "Bitte entferne die oben genannten Eintraege und starte erneut."
         )
+
+
+#: Alter Name, damit bestehender Code und Tests weiter funktionieren.
+assert_paper_only = assert_no_private_keys
 
 
 def assert_read_only_rpc_method(method: str) -> None:

@@ -28,7 +28,7 @@ import time
 from .config import Config
 from .curve import CurveState
 from .feed import NewTokenEvent
-from .paper_engine import ExitReason, PaperEngine, Position
+from .paper_engine import PaperEngine, Position
 from .rpc import SolanaReadOnlyRpc
 from .strategy import (
     Candidate,
@@ -184,6 +184,12 @@ class MarketLoop:
     def _process_one_position(
         self, position: Position, states: dict[str, CurveState | None], now: float
     ) -> None:
+        # Im Echtgeld-Modus kann ein Verkaufsauftrag mehrere Sekunden brauchen,
+        # bis er auf der Blockchain bestaetigt ist. Solange darf keine zweite
+        # Order zur selben Position rausgehen - sonst wird doppelt verkauft.
+        if self.engine.is_busy(position.mint):
+            return
+
         state = states.get(position.bonding_curve)
         if state is None:
             # RPC hat fuer diesen Account nichts geliefert -> letzten bekannten
@@ -226,17 +232,12 @@ class MarketLoop:
         if decision.action == "hold":
             return
 
-        if decision.action == "partial":
-            if state is not None:
-                self.engine.partial_sell(
-                    position, state, decision.fraction, decision.reason)
-                log.info("Teil-TP %s: %s", position.symbol, decision.detail)
-            return
-
-        # action == "close"
-        self.engine.close_position(position, state, decision.reason)
         log.info("Exit %s (%s): %s", position.symbol, decision.reason, decision.detail)
-        self.position_flows.pop(position.mint, None)
+        self.engine.request_exit(
+            position, state,
+            fraction=decision.fraction if decision.action == "partial" else 1.0,
+            reason=decision.reason,
+        )
 
     # ------------------------------------------------------------------
     # Kandidaten
@@ -278,22 +279,21 @@ class MarketLoop:
             return
 
         assert candidate.last_state is not None  # von evaluate_entry garantiert
-        position = self.engine.open_position(
+        log.info("SNIPE %s: %s", candidate.event.symbol, decision.reason)
+
+        # Fluss-Historie aus dem Beobachtungsfenster uebernehmen, damit der
+        # Net-Sell-Flip sofort ab dem ersten Tick nach dem Kauf funktioniert.
+        # Muss VOR dem Kaufauftrag passieren: im Echtgeld-Modus laeuft der Kauf
+        # im Hintergrund, und die Position existiert erst danach.
+        self.position_flows[candidate.mint] = candidate.flow
+
+        self.engine.request_open(
             mint=candidate.mint,
             symbol=candidate.event.symbol,
             name=candidate.event.name,
             bonding_curve=candidate.bonding_curve,
             state=candidate.last_state,
         )
-        if position is None:
-            # Limit erreicht oder Kauf nicht simulierbar - zaehlt als Skip.
-            self.engine.tokens_skipped += 1
-            return
-
-        log.info("SNIPE %s: %s", candidate.event.symbol, decision.reason)
-        # Fluss-Historie aus dem Beobachtungsfenster uebernehmen, damit der
-        # Net-Sell-Flip sofort ab dem ersten Tick nach dem Kauf funktioniert.
-        self.position_flows[candidate.mint] = candidate.flow
 
     # ------------------------------------------------------------------
     # Aufraeumen
@@ -312,9 +312,11 @@ class MarketLoop:
                 log.debug("Kandidat %s verworfen (Zeitueberschreitung).",
                           candidate.event.symbol)
 
-        # Fluss-Historien ohne zugehoerige Position wegwerfen.
+        # Fluss-Historien ohne zugehoerige Position wegwerfen. Achtung: einen
+        # gerade laufenden Kaufauftrag nicht mitloeschen - dessen Position gibt
+        # es noch nicht, die Historie wird aber gleich gebraucht.
         for mint in list(self.position_flows.keys()):
-            if mint not in self.engine.positions:
+            if mint not in self.engine.positions and not self.engine.is_busy(mint):
                 self.position_flows.pop(mint, None)
 
     # ------------------------------------------------------------------
@@ -322,9 +324,11 @@ class MarketLoop:
     # ------------------------------------------------------------------
     async def close_all_positions(self) -> None:
         """
-        Schliesst beim Beenden (Strg+C) alle offenen Paper-Positionen zum
-        zuletzt verfuegbaren Kurs. Es wird noch einmal versucht, frische Kurse
-        zu holen - klappt das nicht, gilt der letzte bekannte Stand.
+        Schliesst beim Beenden (Strg+C) alle offenen Positionen.
+
+        Im Simulationsmodus ist das eine Buchung, im Echtgeld-Modus ein echter
+        Verkauf. Vorher wird noch einmal versucht, frische Kurse zu holen -
+        klappt das nicht, gilt der letzte bekannte Stand.
         """
         if not self.engine.positions:
             return
@@ -344,13 +348,13 @@ class MarketLoop:
             log.warning("Letzter Kursabruf fehlgeschlagen (%s) - nutze letzte "
                         "bekannte Kurse.", exc)
 
-        for position in list(self.engine.positions.values()):
-            try:
-                state = states.get(position.bonding_curve) \
-                    or self.last_states.get(position.bonding_curve)
-                if state is not None:
-                    self.engine.update_position_price(position, state.price_sol)
-                self.engine.close_position(position, state, ExitReason.SHUTDOWN)
-            except Exception as exc:  # noqa: BLE001
-                log.exception("Position %s konnte nicht geschlossen werden: %s",
-                              position.symbol, exc)
+        # Fehlende Kurse mit dem letzten bekannten Stand auffuellen und die
+        # Positionen darauf aktualisieren.
+        for position in self.engine.positions.values():
+            state = states.get(position.bonding_curve) \
+                or self.last_states.get(position.bonding_curve)
+            states[position.bonding_curve] = state
+            if state is not None and state.is_tradable:
+                self.engine.update_position_price(position, state.price_sol)
+
+        await self.engine.shutdown(states)

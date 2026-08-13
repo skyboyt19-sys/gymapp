@@ -1,358 +1,317 @@
-# pump.fun Paper-Sniper
+# pump.fun Sniper-Bot
 
-Ein vollautomatischer Sniper-Bot für pump.fun, der **ausschließlich simuliert**.
-
-Der Bot hängt sich an die echten Live-Launches auf pump.fun, liest die echten
-Kursdaten von der Blockchain und rechnet Käufe und Verkäufe damit durch — aber
-alles nur als Buchung gegen ein **virtuelles SOL-Guthaben**.
-
----
-
-## Sicherheit: Was dieser Bot nicht kann
-
-Das ist kein Versprechen, sondern im Code festgeschrieben:
+Ein automatischer Sniper-Bot für pump.fun mit **zwei Betriebsarten**:
 
 | | |
 |---|---|
-| **Private Key / Seed Phrase** | Wird nie abgefragt, nie gespeichert, nie verwendet. Es gibt keine Funktion, die so etwas entgegennimmt. |
-| **Echte Transaktionen** | Unmöglich. Es ist keine Bibliothek installiert, die Transaktionen signieren könnte (kein `solana-py`-Client, keine Keypair-Verwaltung). |
-| **Blockchain-Zugriff** | Nur **lesend**. Vor jedem einzelnen RPC-Aufruf prüft `sniper/safety.py`, ob die Methode auf der Erlaubnisliste steht (`getAccountInfo`, `getMultipleAccounts`, …). Alles andere wird blockiert. |
-| **Startprüfung** | Findet der Bot beim Start eine Umgebungsvariable, die nach einem Wallet-Geheimnis aussieht (`*PRIVATE_KEY*`, `*SEED_PHRASE*`, `*MNEMONIC*`, …), **startet er gar nicht erst**. |
+| **Simulation** (Standard) | Hängt sich an die echten Live-Launches, rechnet Käufe und Verkäufe gegen die echten Kursdaten — aber nur gegen ein virtuelles Guthaben. Kostet nichts. |
+| **Echtgeld** | Dieselbe Strategie, aber die Käufe und Verkäufe gehen wirklich raus, über eine Bot-Wallet bei PumpPortal. |
 
-Dein Geld kann durch diesen Bot nicht bewegt werden, weil er keinen Weg dazu hat.
+Umgeschaltet wird mit **einer Zeile** in der `config.yaml`:
+
+```yaml
+live_trading: false     # false = Simulation, true = echtes Geld
+```
 
 ---
 
-## Teil 1 — Installation unter Windows
+## Sicherheit
+
+| | |
+|---|---|
+| **Private Key / Seed Phrase** | Wird **nie** abgefragt, nie gespeichert, nie verwendet — auch im Echtgeld-Modus nicht. Der Bot signiert grundsätzlich nichts selbst; das macht PumpPortal mit deinem API-Key. |
+| **Startprüfung** | Findet der Bot in der Umgebung eine Variable, die nach einem Wallet-Geheimnis aussieht (`*PRIVATE_KEY*`, `*SEED_PHRASE*`, `*MNEMONIC*` …), **startet er gar nicht erst**. |
+| **Blockchain-Zugriff** | Nur **lesend**. Vor jedem RPC-Aufruf prüft `sniper/safety.py`, ob die Methode auf der Erlaubnisliste steht. `sendTransaction` und Verwandte sind dauerhaft gesperrt. |
+| **Reichweite** | Der Bot kann ausschließlich bewegen, was auf der **Bot-Wallet** liegt. Deine Haupt-Wallet ist für ihn nicht erreichbar. |
+| **Not-Aus** | Verliert die Bot-Wallet 30 % (einstellbar), verkauft der Bot alles und schaltet sich ab. |
+
+Der **API-Key ist trotzdem geheim** — wer ihn hat, kann über deine Bot-Wallet handeln. Behandle ihn wie ein Passwort und lade nur so viel auf die Wallet, wie du bereit bist zu verlieren.
+
+---
+
+# Teil 1 — Installation unter Windows
 
 ### Schritt 1: Python installieren
 
-Nur nötig, falls du Python noch nicht hast.
+Nur nötig, falls noch nicht vorhanden.
 
-1. Gehe auf **https://www.python.org/downloads/windows/**
-2. Lade **Python 3.11** oder neuer herunter (Button „Download Python 3.x.x").
-3. Starte die heruntergeladene Datei.
-4. **Wichtig:** Setze auf der ersten Seite unten den Haken bei
-   **„Add python.exe to PATH"**. Ohne diesen Haken findet Windows Python später nicht.
-5. Dann auf „Install Now" klicken und warten.
+1. **https://www.python.org/downloads/windows/** → Python 3.11 oder neuer laden
+2. Installer starten
+3. **Wichtig:** Haken bei **„Add python.exe to PATH"** setzen
+4. „Install Now"
 
-**Prüfen, ob es geklappt hat:** Drücke `Windows-Taste + R`, tippe `cmd`, Enter.
-Tippe in das schwarze Fenster:
+### Schritt 2: Ordner ablegen
 
-```
-python --version
-```
+Den Ordner an einen Ort **ohne Umlaute und Leerzeichen** kopieren, z. B. `C:\sniper\`
 
-Wenn dort `Python 3.11.x` (oder höher) steht, ist alles in Ordnung.
+### Schritt 3: Starten
 
-### Schritt 2: Den Bot-Ordner ablegen
+**Doppelklick auf `run.bat`.** Beim ersten Start legt es automatisch die Python-Umgebung an, installiert die Pakete (1–2 Minuten) und erzeugt die `.env`. Danach startet er sofort.
 
-Kopiere den Ordner `pumpfun-paper-sniper` an einen Ort ohne Umlaute und
-Leerzeichen im Pfad, zum Beispiel:
+> Windows SmartScreen: „Weitere Informationen" → „Trotzdem ausführen".
 
-```
-C:\sniper\
-```
+### Schritt 4: Feed testen
 
-### Schritt 3: Starten (macht den Rest automatisch)
-
-**Doppelklick auf `run.bat`.**
-
-Beim ersten Start passiert automatisch:
-
-1. Es wird eine abgeschottete Python-Umgebung angelegt (Ordner `.venv`) —
-   damit bringt der Bot dein übriges Python nicht durcheinander.
-2. Alle benötigten Pakete werden installiert (`pip install -r requirements.txt`).
-   Das dauert **1–2 Minuten**, aber nur beim allerersten Mal.
-3. Die Datei `.env` wird aus `.env.example` erzeugt.
-4. Der Bot startet.
-
-Ab dem zweiten Doppelklick startet er sofort.
-
-> **Falls Windows SmartScreen meckert** („Der Computer wurde geschützt"):
-> Klicke auf „Weitere Informationen" → „Trotzdem ausführen". Das ist die
-> normale Warnung für jede nicht signierte `.bat`-Datei.
-
-### Schritt 4 (empfohlen): Erst den Feed testen
-
-Bevor du den ganzen Bot laufen lässt, prüfe mit einem Klick, ob die
-Live-Verbindung auf deinem PC funktioniert:
-
-**Doppelklick auf `check_feed.bat`**
-
-Es öffnet sich ein Fenster, das **nichts handelt** und nur die neuen
-pump.fun-Token auflistet, sobald sie starten:
-
-```
-   1  PEPE2      Pepe The Second          Preis 0.0000000280 SOL  Dev-Buy  1.200 SOL  Dev-Anteil   3.8 %
-   2  MOONX      Moon Explorer            Preis 0.0000000279 SOL  Dev-Buy  0.500 SOL  Dev-Anteil   1.6 %
-```
-
-Läuft das (typischerweise mehrere Token pro Minute), funktioniert alles.
-Beenden mit `STRG+C`.
+**Doppelklick auf `check_feed.bat`** — listet nur die neuen Launches auf, handelt nichts. Kommen dort Token an, funktioniert alles. Beenden mit `STRG+C`.
 
 ---
 
-## Teil 2 — Der laufende Bot
+# Teil 2 — Simulation (fang hier an)
 
-### Das Dashboard
+Standardmäßig läuft der Bot simuliert. Das Dashboard zeigt:
 
-```
-╭──────────────────────────────────────────────────────────────────────────╮
-│   pump.fun SNIPER    PAPER-TRADING - reine Simulation. Kein echtes Geld  │
-╰──────────────────────────────────────────────────────────────────────────╯
-╭─────────────────────────── Konto (virtuell) ─────────────────────────────╮
-│ Guthaben (frei)   9.5500 SOL   Gescannt   142   Feed    verbunden (142)  │
-│ Gesamtwert        9.8231 SOL   Gesnipet     7   RPC     ok (86 ms)       │
-│ P&L gesamt       -0.1769 SOL   Geskippt   135   Trades           5       │
-│ Trefferquote        40.0 %     Offen      2/4   Beobachtet       3       │
-╰──────────────────────────────────────────────────────────────────────────╯
-```
+- virtuelles Guthaben, Gesamtwert, P&L, Trefferquote
+- Zähler: gescannt / gesnipet / geskippt
+- offene Positionen mit Live-P&L und Restzeit bis zum Zwangsverkauf
+- die letzten geschlossenen Trades
 
-| Feld | Bedeutung |
-|---|---|
-| **Guthaben (frei)** | Virtuelles SOL, das gerade nicht in Positionen steckt |
-| **Gesamtwert** | Guthaben **plus** aktueller Verkaufswert der offenen Positionen |
-| **P&L gesamt** | Gewinn/Verlust gegenüber dem Startguthaben |
-| **Trefferquote** | Anteil der geschlossenen Trades mit Gewinn |
-| **Gescannt** | Wie viele Launches der Bot insgesamt gesehen hat |
-| **Geskippt** | Wie viele davon die Einstiegsfilter nicht bestanden haben |
-| **Beobachtet** | Token, die gerade im Signalfenster sind (noch nicht gekauft) |
-
-Darunter siehst du die **offenen Positionen** (mit Live-P&L und der Restzeit bis
-zum Zwangsverkauf), die **letzten geschlossenen Trades** und die letzten
-**Ereignisse**.
-
-Dass „Geskippt" viel größer ist als „Gesnipet", ist normal und gewollt — die
-Filter sind streng.
-
-### Ausstiegsgründe in der Trade-Liste
+**Ausstiegsgründe:**
 
 | Kürzel | Bedeutung |
 |---|---|
-| `TP` | Take-Profit erreicht (+40 %) |
+| `TP` | Take-Profit (+40 %) |
 | `PARTIAL` | Teilverkauf bei +25 % (halbe Position) |
-| `TRAIL` | Trailing-Stop ausgelöst |
+| `TRAIL` | Trailing-Stop |
 | `SL` | Stop-Loss (−25 %) |
-| `RUG` | Kurssturz innerhalb eines einzigen Ticks |
-| `FLIP` | Kaufdruck ist in Nettoverkäufe gekippt |
-| `TIME` | Harter Zeitstopp nach 120 Sekunden |
-| `MIGR` | Token ist zu PumpSwap migriert |
-| `SHUTDOWN` | Du hast den Bot beendet (`STRG+C`) |
+| `RUG` | Kurssturz in einem einzigen Tick |
+| `FLIP` | Kaufdruck in Nettoverkäufe gekippt |
+| `TIME` | Harter Zeitstopp (120 s) |
+| `MIGR` | Token zu PumpSwap migriert |
+| `SHUTDOWN` | Du hast beendet |
 
-### Beenden
+Beenden mit **STRG+C**. Alle Trades landen in `trades.csv` (öffnet sich per Doppelklick direkt in Excel).
 
-**`STRG+C`** im Bot-Fenster. Der Bot schließt dann alle offenen
-Paper-Positionen, zeigt die Abschluss-Zusammenfassung an und beendet sich sauber.
+**Lass das ein paar Stunden laufen, bevor du auf Echtgeld umschaltest.** Wenn die Strategie simuliert Verluste macht, macht sie mit echtem Geld dieselben Verluste — nur teurer.
 
 ---
 
-## Teil 3 — Einstellungen ändern (`config.yaml`)
+# Teil 3 — Echtgeld-Modus einschalten
 
-Öffne `config.yaml` mit einem Texteditor (Rechtsklick → „Öffnen mit" → Editor).
-Änderungen greifen nach einem **Neustart** des Bots.
+## Schritt 1: Bot-Wallet bei PumpPortal anlegen
 
-**Zwei Regeln:** Nur die Zahl hinter dem Doppelpunkt ändern, und **niemals
-Tabulatoren** benutzen — nur Leerzeichen.
+1. Auf **https://pumpportal.fun/** gehen
+2. Zu **„Lightning Transaction API"**
+3. Dort eine Wallet erstellen lassen. Du bekommst zwei Dinge:
+   - einen **API-Key** (geheim)
+   - eine **Wallet-Adresse** (öffentlich, fängt meist mit einem Buchstaben/Zahl an, 32–44 Zeichen)
+4. **Beide sofort sichern**, z. B. in einer Textdatei. Den API-Key bekommst du unter Umständen kein zweites Mal zu sehen.
 
-### Die wichtigsten Stellschrauben
+> Diese Wallet gehört zu deinem API-Key. Sie ist getrennt von deiner normalen Phantom-Wallet — genau das ist der Sinn.
+
+## Schritt 2: SOL auf die Bot-Wallet schicken
+
+Von deiner Börse oder deiner Haupt-Wallet an die **Wallet-Adresse** aus Schritt 1.
+
+**Wie viel?** Bei den Standardeinstellungen (0,15 SOL Einsatz, 4 Positionen gleichzeitig):
+
+```
+4 × 0,15 SOL   = 0,60 SOL   für die Positionen
++ ca. 0,10 SOL             Gebührenreserve
+--------------------------------
+≈ 0,70 SOL
+```
+
+Willst du mit weniger anfangen, setz in der `config.yaml` `max_open_positions: 2` — dann reichen ~0,35 SOL.
+
+## Schritt 3: Zugangsdaten eintragen
+
+Datei **`.env`** im Bot-Ordner mit dem Editor öffnen (Rechtsklick → Öffnen mit → Editor) und die beiden Zeilen ausfüllen:
+
+```
+PUMPPORTAL_API_KEY=dein-api-key-hier
+BOT_WALLET_PUBKEY=deine-wallet-adresse-hier
+```
+
+> Falls es keine `.env` gibt: einmal `run.bat` starten, dann wird sie angelegt.
+> In diese Datei gehört **niemals ein Private Key**.
+
+## Schritt 4: Umschalten
+
+Datei **`config.yaml`** öffnen, ganz oben:
+
+```yaml
+live_trading: true
+```
+
+Speichern.
+
+## Schritt 5: Starten
+
+**Doppelklick auf `run.bat`.**
+
+Jetzt kommt ein **roter Warnbildschirm** mit deiner Wallet-Adresse, dem aktuellen Guthaben, dem Einsatz pro Trade und der Not-Aus-Schwelle — plus ein **Countdown von 8 Sekunden**. In dieser Zeit kannst du mit `STRG+C` noch abbrechen.
+
+Danach handelt der Bot mit echtem Geld. Das Dashboard ist rot statt grün, damit du die Betriebsart nie verwechselst.
+
+## Schritt 6: Beenden
+
+**STRG+C** — und dann **das Fenster offen lassen**, bis „Abschluss der Sitzung" erscheint. Der Bot verkauft dabei alle offenen Positionen. Das dauert ein paar Sekunden pro Position.
+
+> Wenn du den PC einfach ausschaltest oder das Fenster wegklickst, bleiben die Token auf der Bot-Wallet liegen. Dafür gibt es Teil 4.
+
+---
+
+# Teil 4 — Notverkauf
+
+**Doppelklick auf `panic_sell.bat`**
+
+Das Skript listet alle Token auf, die auf der Bot-Wallet liegen, fragt einmal nach (du musst `JA` tippen) und verkauft dann alles zu 100 %.
+
+Brauchst du, wenn:
+- der Bot abgestürzt ist oder der PC ausgegangen ist
+- ein Verkauf endgültig fehlgeschlagen ist
+- du einfach schnell alles glattstellen willst
+
+**Warum es dieses Skript geben muss:** Die Bot-Wallet bei PumpPortal ist eine reine API-Wallet. Du kannst sie nicht im Browser mit pump.fun verbinden und dort von Hand verkaufen. Ohne dieses Skript kämst du an hängengebliebene Token nicht heran.
+
+---
+
+# Teil 5 — Einstellungen (`config.yaml`)
+
+Mit einem Texteditor öffnen. **Nur die Zahl hinter dem Doppelpunkt ändern, niemals Tabulatoren benutzen.** Änderungen greifen nach einem Neustart.
+
+### Die wichtigsten Werte
 
 | Einstellung | Wirkung, wenn du sie **erhöhst** |
 |---|---|
-| `position_size_sol` | Größerer Einsatz pro Trade → größere Gewinne **und** Verluste |
-| `max_open_positions` | Mehr Token gleichzeitig → mehr Streuung, mehr RPC-Last |
-| `signal_window_sec` | Der Bot wartet länger ab → sicherere Signale, aber schlechterer Einstiegskurs |
-| `min_net_buy_volume_sol` | **Strenger.** Weniger Trades, aber nur bei echtem Kaufdruck |
+| `position_size_sol` | Größerer Einsatz → größere Gewinne **und** Verluste |
+| `max_open_positions` | Mehr Token gleichzeitig → mehr Streuung, mehr Kapitalbedarf |
+| `signal_window_sec` | Bot wartet länger ab → sicherere Signale, schlechterer Einstiegskurs |
+| `min_net_buy_volume_sol` | **Strenger.** Weniger Trades, nur bei echtem Kaufdruck |
 | `min_price_gain_in_window_pct` | **Strenger.** Nur Token, die schon deutlich anziehen |
-| `max_curve_progress_pct` | Lockerer — der Bot kauft auch Token, die schon weiter gelaufen sind |
-| `max_dev_holding_pct` | Lockerer — riskanter, weil der Ersteller mehr Token hält |
+| `max_curve_progress_pct` | Lockerer — kauft auch später gelaufene Token |
 | `take_profit_pct` | Gewinne laufen lassen, aber häufiger wieder abgeben |
 | `stop_loss_pct` | Weiterer Stop → weniger Fehlausstiege, größere Einzelverluste |
-| `hard_time_stop_sec` | Längere Haltedauer (**dieser Wert ist die harte Obergrenze**) |
-| `rpc_poll_ms` | Seltenere Kursabfragen → schont die RPC, aber träge Reaktion |
+| `hard_time_stop_sec` | Längere Haltedauer (**harte Obergrenze**) |
 
-### „Ich will weniger / mehr Trades sehen"
+### Nur im Echtgeld-Modus (`live:`-Block)
 
-* **Mehr Trades:** `min_net_buy_volume_sol` auf `0.5` und
-  `min_price_gain_in_window_pct` auf `3` senken.
-* **Weniger, dafür bessere:** `min_net_buy_volume_sol` auf `3.0` und
-  `min_price_gain_in_window_pct` auf `15` erhöhen.
+| Einstellung | Bedeutung |
+|---|---|
+| `max_total_loss_pct: 30` | Not-Aus. Bei 30 % Verlust vom Startkapital: alles verkaufen, abschalten. `0` schaltet ihn aus (nicht empfohlen). |
+| `order_slippage_pct: 15` | Wie viel schlechter der Kurs sein darf, bevor die Transaktion abgelehnt wird. Zu niedrig = viele Fehlschläge (kosten trotzdem Gebühren), zu hoch = schlechte Fills. |
+| `priority_fee_sol: 0.0005` | Höher = deine Transaktion kommt schneller in einen Block. Bei kleinen Positionen der größte Kostenblock. |
+| `min_wallet_balance_sol: 0.02` | Es wird nicht gekauft, wenn danach weniger übrig bliebe. Ohne diese Reserve kämst du aus deinen Positionen nicht mehr raus. |
+| `startup_countdown_sec: 8` | Bedenkzeit vor dem ersten echten Trade. |
 
 ### Reihenfolge der Ausstiegsregeln
 
-Bei jedem Kurs-Tick wird in genau dieser Reihenfolge geprüft — die erste
-zutreffende Regel gewinnt:
-
 ```
-1. Migriert   →  2. Rug   →  3. Stop-Loss   →  4. (Teil-)Take-Profit
-             →  5. Trailing   →  6. Net-Sell-Flip   →  7. Hard-Time-Stop
+1. Migriert  →  2. Rug  →  3. Stop-Loss  →  4. (Teil-)Take-Profit
+            →  5. Trailing  →  6. Net-Sell-Flip  →  7. Hard-Time-Stop
 ```
 
-Der **Hard-Time-Stop steht bewusst am Ende**: Er ist das letzte Wort. Egal was
-der Kurs macht — nach `hard_time_stop_sec` (Standard 120 s) wird verkauft.
+Der **Hard-Time-Stop steht bewusst am Ende** — er ist das letzte Wort. Egal was der Kurs macht, nach 120 s wird verkauft.
 
 ---
 
-## Teil 4 — Schnellere RPC (empfohlen)
+# Teil 6 — Was dich das kostet
 
-Standardmäßig nutzt der Bot die öffentliche Solana-RPC
-(`https://api.mainnet-beta.solana.com`). Die funktioniert, ist aber stark
-rate-limitiert. Bei mehreren offenen Positionen siehst du dann im Dashboard
-`RPC: x Fehler in Folge` und im Log Meldungen über **HTTP 429**.
+Pro Runde (Kauf + Verkauf) fallen an:
 
-Ein kostenloser Zugang läuft deutlich stabiler:
+| Posten | Kosten |
+|---|---|
+| pump.fun-Gebühr | 1 % × 2 = **2 %** |
+| PumpPortal-Gebühr | 0,5 % × 2 = **1 %** |
+| Slippage | mehrere % |
+| Priority Fee | ~0,0005 SOL × 2 — **fix, unabhängig von der Größe** |
+| Solana-Grundgebühr | ~0,00001 SOL — vernachlässigbar |
 
-1. Kostenlos registrieren bei **https://www.helius.dev/** (oder
-   https://www.quicknode.com/).
-2. Du bekommst eine URL wie
-   `https://mainnet.helius-rpc.com/?api-key=abc123…`
-3. Öffne die Datei `.env` im Bot-Ordner mit dem Editor.
-4. Ersetze die Zeile durch deine URL:
+Die prozentualen Posten (~3 % plus Slippage) tun bei jeder Größe gleich weh. Der **fixe** Anteil ist bei kleinen Positionen der Killer:
+
+| Einsatz | Fixkosten-Anteil | Gesamtkosten pro Runde |
+|---|---|---|
+| 0,001 SOL | 100 % + | sinnlos |
+| 0,01 SOL | ~20 % | ~29 % |
+| 0,05 SOL | ~4 % | ~13 % |
+| **0,15 SOL** | ~1,3 % | **~10 %** |
+
+Deshalb steht `take_profit_pct` auf 40: darunter lohnt sich der Trade nicht. Und deshalb sagt ein Test mit Cent-Beträgen nichts über die Strategie aus — er misst nur Gebühren.
+
+**Dazu kommt:** Fehlgeschlagene Transaktionen kosten die Priority Fee trotzdem. Bei engem `order_slippage_pct` kann das ein spürbarer Anteil sein.
+
+---
+
+# Teil 7 — Schnellere RPC (empfohlen)
+
+Standard ist die öffentliche Solana-RPC. Die funktioniert, ist aber stark rate-limitiert — im Dashboard siehst du dann `RPC: x Fehler in Folge`.
+
+Im Echtgeld-Modus ist das **nicht nur unbequem**: Der Bot braucht die RPC, um Fills zu bestätigen und den Not-Aus zu prüfen. Nimm hier einen eigenen Zugang.
+
+1. Kostenlos registrieren bei **https://www.helius.dev/** oder **https://www.quicknode.com/**
+2. Du bekommst eine URL wie `https://mainnet.helius-rpc.com/?api-key=abc123…`
+3. In der `.env` eintragen:
 
 ```
 SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=abc123...
 ```
 
-5. Bot neu starten.
-
-> Das ist ein reiner **Lese**-Zugang. Auch damit kann der Bot keine Transaktion
-> senden. In `.env` gehört **kein** Private Key — der Bot würde den Start
-> verweigern.
+Auch das bleibt ein reiner **Lese**-Zugang.
 
 ---
 
-## Teil 5 — Protokolldateien
+# Teil 8 — Protokolldateien
 
 | Datei | Inhalt |
 |---|---|
-| `trades.csv` | Jeder Kauf, Teilverkauf und Verkauf mit Preis, P&L und Guthaben. Trennzeichen `;` — **öffnet sich in Excel direkt korrekt** per Doppelklick. |
-| `session.log` | Vollständiges Protokoll: Verbindungen, Fehler, jede Entscheidung. Das ist die Datei, in die du bei Problemen schaust. |
+| `trades.csv` | Jeder Kauf, Teilverkauf und Verkauf mit Preis, P&L und Guthaben. Trennzeichen `;` — öffnet in Excel direkt korrekt. |
+| `session.log` | Vollständiges Protokoll inklusive aller Transaktions-Signaturen. Bei Problemen die erste Anlaufstelle. |
 
-Beide Dateien werden fortlaufend erweitert. Zum Zurücksetzen einfach löschen —
-der Bot legt sie neu an.
+Jede echte Transaktion wird mit ihrem Solscan-Link geloggt — damit kannst du jeden einzelnen Trade auf der Blockchain nachprüfen.
 
 ---
 
-## Teil 6 — Fehlersuche
+# Teil 9 — Fehlersuche
 
 ### „Python wurde nicht gefunden"
-Bei der Installation der Haken bei **„Add python.exe to PATH"** wurde
-vergessen. Python noch einmal installieren, diesmal mit Haken (oder
-„Modify" → „Add to PATH").
+Der Haken bei „Add python.exe to PATH" fehlte. Python neu installieren (oder „Modify" → „Add to PATH").
 
-### Wenn der Feed nicht läuft
-Symptom: Im Dashboard steht dauerhaft `Feed: getrennt - Reconnect läuft`,
-oder `check_feed.bat` zeigt keinen einzigen Token.
-
-Der Bot versucht dabei **automatisch immer wieder**, sich neu zu verbinden
-(mit wachsender Wartezeit bis 30 s) — er stürzt nicht ab. Mögliche Ursachen:
-
-1. **Firewall / Virenscanner** blockiert die WebSocket-Verbindung von Python.
-   → Python in der Firewall freigeben.
-2. **Firmen- oder Schul-Netzwerk** mit Proxy blockiert WebSockets.
-   → Über ein anderes Netz probieren (z. B. Handy-Hotspot).
-3. **PumpPortal ist gerade offline.** Prüfe https://pumpportal.fun/ im Browser.
-
-**Alternative Datenquellen** (falls PumpPortal dauerhaft ausfällt): Bitquery
-bietet pump.fun-GraphQL-Streams mit kostenlosem Kontingent, erfordert aber eine
-Registrierung und einen API-Key. Der Feed ist in `sniper/feed.py` sauber
-gekapselt — es müsste nur diese eine Datei ersetzt werden, sie liefert
-`NewTokenEvent`-Objekte an den Rest des Bots. Solange PumpPortal läuft, ist es
-die einzige wirklich schlüsselfreie Quelle und deshalb der Standard.
+### Feed verbindet nicht
+Im Dashboard steht dauerhaft `Feed: getrennt`. Der Bot versucht es automatisch immer wieder (Backoff bis 30 s), er stürzt nicht ab. Ursachen:
+1. Firewall/Virenscanner blockiert Python → freigeben
+2. Firmen-/Schulnetz mit Proxy → anderes Netz probieren
+3. PumpPortal offline → https://pumpportal.fun/ im Browser prüfen
 
 ### „RPC: x Fehler in Folge"
-Die öffentliche RPC drosselt dich. Lösung: kostenlosen Key eintragen
-(→ Teil 4) oder `rpc_poll_ms` in der `config.yaml` auf `1500` erhöhen.
+Die öffentliche RPC drosselt. → Teil 7, oder `rpc_poll_ms` auf `1500` erhöhen.
 
-### Der Bot snipet gar nichts
-Das ist meistens korrektes Verhalten — die Filter sind streng, und viele
-Launches sind tot. Schau in `session.log` (bzw. starte mit
-`.venv\Scripts\python.exe -m sniper.main --verbose`), dort steht für jeden
-übersprungenen Token der Grund, z. B.
-`SKIP ABC: Kaufdruck zu klein (0.42 < 1.5 SOL)`. Wenn du dieselbe Begründung
-immer wieder siehst, ist das die Stellschraube, die du lockern müsstest.
+### Der Bot snipet nichts
+Meist korrekt — die Filter sind streng. Starte mit `--verbose` bzw. schau in `session.log`: dort steht für jeden übersprungenen Token der Grund, z. B. `SKIP ABC: Kaufdruck zu klein (0.42 < 1.5 SOL)`. Siehst du immer dieselbe Begründung, ist das die Stellschraube.
+
+### „Kauf ist NICHT durchgegangen"
+Normal beim Sniping. Die Transaktion hat es nicht rechtzeitig in einen Block geschafft oder das Slippage-Limit wurde gerissen. Der Bot bucht nichts und macht weiter. Häuft es sich: `priority_fee_sol` erhöhen (z. B. `0.001`) oder `order_slippage_pct` hochsetzen.
+
+### Der Start bricht mit „Kontostand konnte nicht abgefragt werden" ab
+Gewollt. Ohne Kontostand könnte der Bot weder Fills prüfen noch den Not-Aus auslösen — dann handelt er lieber gar nicht. Prüfe `BOT_WALLET_PUBKEY` und die RPC-URL.
 
 ---
 
-## Teil 7 — Was ich gegenüber deiner Vorlage geprüft und geändert habe
+# Teil 10 — Was ich geprüft und angepasst habe
 
-Du hattest darum gebeten, die aktuellen Docs zu prüfen und anzupassen. Ergebnis:
-
-**Bestätigt, unverändert übernommen:**
-* Das **Bonding-Curve-Layout** stimmt weiterhin. Discriminator
-  `0x17b7f83760d8ac60` und alle Byte-Offsets (`virtualTokenReserves` @ 0x08 bis
-  `complete` @ 0x30) entsprechen der offiziellen Doku
-  (github.com/pump-fun/pump-public-docs).
-* **Preisformel und Curve-Progress** wie von dir angegeben. Die
-  Startreserve `793.100.000.000.000` ist weiterhin der Standardwert.
-* **PumpPortal** `wss://pumpportal.fun/api/data` mit `subscribeNewToken` ist
-  weiterhin kostenlos und ohne Key nutzbar. Der Bot hält, wie vorgeschrieben,
-  **genau eine** Verbindung.
-* **1 % Gebühr** auf der Bonding Curve ist weiterhin korrekt.
+**Bestätigt (Stand August 2026):**
+* Bonding-Curve-Layout unverändert: Discriminator `0x17b7f83760d8ac60`, Offsets `virtualTokenReserves` @ 0x08 bis `complete` @ 0x30 — geprüft gegen github.com/pump-fun/pump-public-docs.
+* `subscribeNewToken` bei PumpPortal ist **weiterhin kostenlos und ohne Key**. Kostenpflichtig sind seit Mai 2026 nur die Per-Token-Trade-Streams (`subscribeTokenTrade`, `subscribeAccountTrade`) — die nutzt der Bot bewusst nicht.
+* 1 % pump.fun-Gebühr auf der Bonding Curve, 0,5 % PumpPortal-Gebühr pro Trade.
 
 **Angepasst:**
-1. **Zusätzliches `creator`-Feld.** Neuere Bonding-Curve-Accounts haben hinter
-   `complete` noch eine 32-Byte-Creator-Adresse. Der Bot liest sie, wenn sie da
-   ist, und kommt auch mit älteren (kürzeren) Accounts zurecht — sonst wären
-   je nach Token-Alter Dekodierfehler möglich.
-2. **Pool-Filter.** PumpPortal streamt inzwischen auch Launches anderer
-   Launchpads (Feld `pool`, z. B. `"bonk"`). Deren Accounts haben ein anderes
-   Layout. Der Bot verarbeitet deshalb nur `pool: "pump"`
-   (einstellbar unter `advanced.allowed_pools`).
-3. **`getMultipleAccounts` statt `getAccountInfo`.** Du hattest
-   `getAccountInfo` genannt. Bei bis zu 4 Positionen plus mehreren beobachteten
-   Kandidaten wären das pro Sekunde schnell 10+ Einzelaufrufe — die öffentliche
-   RPC blockt das sofort. Der Bot holt jetzt **alle** beobachteten Accounts mit
-   *einem* Aufruf (bis zu 100 Stück). Gleiche Daten, ein Bruchteil der Last.
-4. **Bewertung migrierter Token.** Ein migrierter Token wird **nicht** als
-   Totalverlust gebucht. Migration heißt: die Kurve ist voll, der Kurs steht am
-   Hoch, und der Handel läuft auf PumpSwap weiter. Der Bot handelt dort nicht
-   mehr (wie von dir gefordert), bewertet den Restbestand beim Schließen aber
-   zum zuletzt gesehenen Kurs abzüglich Gebühr und Slippage. Mit 0 zu bewerten
-   würde die Trefferquote systematisch verfälschen.
-5. **`advanced:`-Block in der `config.yaml`.** Deine Werte sind exakt wie
-   vorgegeben übernommen. Darunter kam ein zusätzlicher, kommentierter Block für
-   Details, die eine Zahl brauchten, aber in deiner Vorlage offen waren — z. B.
-   über welches Zeitfenster der „Net-Sell-Flip" gemessen wird (5 s) und ab
-   welchem Abfluss er zählt (0,05 SOL, damit Mini-Verkäufe keinen Fehlalarm
-   auslösen). Du musst dort nichts anfassen.
+1. **`creator`-Feld:** Neuere Curve-Accounts haben hinter `complete` 32 zusätzliche Bytes. Wird optional gelesen, ältere Accounts funktionieren weiter.
+2. **Pool-Filter:** PumpPortal streamt auch andere Launchpads (`pool: "bonk"` etc.) mit anderem Account-Layout. Der Bot verarbeitet nur `pool: "pump"`.
+3. **`getMultipleAccounts` statt `getAccountInfo`:** Alle beobachteten Kurse in einem Aufruf statt 10+ Einzelaufrufen pro Sekunde — sonst blockt jede kostenlose RPC sofort.
+4. **Migrierte Token nicht als Totalverlust:** Migration heißt volle Kurve und Höchstkurs. Der Bot handelt dort nicht weiter, bewertet den Rest aber zum letzten Kurs.
+5. **Beträge aus der Transaktion, nicht aus Kontoständen:** Der erste Entwurf hat den SOL-Aufwand aus der Differenz des Wallet-Guthabens vorher/nachher berechnet. Das ist falsch, sobald mehrere Aufträge gleichzeitig laufen — dann mischt sich der Erlös eines Verkaufs in die Messung eines Kaufs. Ein Testlauf zeigte dadurch `+226 %` statt der echten `+29 %`. Der Bot liest die Beträge jetzt per `getTransaction` direkt aus der jeweiligen Transaktion. Die liefert nebenbei die einzige verlässliche Antwort auf „hat es geklappt?".
+6. **Notverkauf-Skript:** Weil die PumpPortal-Wallet eine API-Wallet ist und sich nicht im Browser mit pump.fun verbinden lässt, gäbe es sonst keinen Weg an hängengebliebene Token.
 
-**Nicht live getestet:** Die Umgebung, in der ich den Bot gebaut habe, hat
-keinen Netzwerkzugang zu PumpPortal oder zur Solana-RPC. Die Mathematik, die
-Strategie-Logik und der komplette Ablauf sind durch **59 automatische Tests**
-und einen End-to-End-Durchlauf mit simulierten Kursverläufen abgedeckt (alle
-Ausstiegswege — TP, Teil-TP, SL, Trailing, Rug, Flip, Time-Stop, Migration —
-laufen darin durch). Die echte Verbindung musst du einmal mit
-`check_feed.bat` auf deinem PC bestätigen.
+**Nicht live getestet:** Die Umgebung, in der der Bot gebaut wurde, hat keinen Netzzugang zu PumpPortal oder zur Solana-RPC. Abgedeckt sind **73 automatische Tests** plus zwei End-to-End-Durchläufe (Simulation und Echtgeld-Pfad) gegen eine simulierte Wallet und Blockchain — inklusive fehlgeschlagener Aufträge, paralleler Orders, Not-Aus und aller Ausstiegswege. Die echten Verbindungen musst du auf deinem PC bestätigen: erst `check_feed.bat`, dann Simulation, dann Echtgeld.
 
 ---
 
-## Teil 8 — Ehrliche Grenzen dieser Simulation
+# Teil 11 — Ehrliche Grenzen
 
-Damit du die Ergebnisse richtig einordnest:
-
-* **Der Bot ist kein echter Sniper.** Echte Sniper landen in derselben
-  Solana-Transaktion oder demselben Block wie der Dev-Buy. Dieser Bot schaut
-  erst 10 Sekunden zu (`signal_window_sec`) — das ist bewusst so, weil ohne
-  eigenen Node und ohne bezahlten Stream ein Block-0-Einstieg gar nicht
-  möglich wäre. Die Ergebnisse sind daher die einer *Momentum*-Strategie,
-  nicht die eines Block-0-Snipes.
-* **Kursauflösung.** Der Kurs wird alle `rpc_poll_ms` (800 ms) abgefragt.
-  Was zwischen zwei Abfragen passiert, sieht der Bot nicht. Ein Rug, der
-  innerhalb von 200 ms durchläuft, wird erst beim nächsten Tick erkannt — in
-  der Realität wärst du dann schlechter raus als hier simuliert.
-* **Kein Einfluss auf den Markt.** Der simulierte Kauf verändert die echte
-  Kurve nicht. Bei `position_size_sol: 0.15` ist das vernachlässigbar; bei
-  großen Einsätzen wäre die Simulation zu optimistisch.
-* **Slippage ist eine Annahme.** Die 3 % sind ein Pauschalwert. Real
-  konkurrierst du mit anderen Bots um denselben Block; das kann deutlich
-  schlechter ausfallen.
-* **Keine fehlgeschlagenen Transaktionen.** In der Realität scheitert ein Teil
-  der Käufe (zu wenig Priority Fee, Slippage-Limit überschritten) und kostet
-  trotzdem Gebühren. Das simuliert der Bot nicht.
-
-Kurz: Die Zahlen sind **eher besser als die Realität**. Behandle sie als Test
-der Strategie-Logik, nicht als Renditeversprechen.
+* **Der Bot ist kein echter Sniper.** Echte Sniper landen im selben Block wie der Dev-Buy. Dieser Bot schaut erst 10 Sekunden zu — ohne eigenen Node und bezahlten Stream geht es nicht anders. Das ist eine *Momentum*-Strategie, kein Block-0-Snipe.
+* **Kursauflösung 800 ms.** Was dazwischen passiert, sieht der Bot nicht. Ein Rug in 200 ms wird zu spät erkannt.
+* **Slippage ist eine Annahme** (in der Simulation 3 %). Real konkurrierst du mit anderen Bots um denselben Block; es kann deutlich schlechter laufen.
+* **Die Simulation kennt keine fehlgeschlagenen Transaktionen.** Real scheitert ein Teil der Käufe und kostet trotzdem Gebühren. Die simulierten Zahlen sind daher **besser als die Realität**.
+* **Memecoin-Sniping ist ein Negativsummenspiel.** Gebühren, Slippage und schnellere Bots ziehen kontinuierlich Wert ab. Die meisten dieser Token gehen auf null. Behandle das als bezahltes Lernexperiment, nicht als Einkommensquelle.
 
 ---
 
@@ -360,31 +319,41 @@ der Strategie-Logik, nicht als Renditeversprechen.
 
 ```
 pumpfun-paper-sniper/
-├── run.bat              ← Doppelklick zum Starten
-├── check_feed.bat       ← Doppelklick für den Feed-Test
-├── config.yaml          ← alle Einstellungen (kommentiert)
-├── .env.example         ← Vorlage für die RPC-URL
-├── requirements.txt     ← benötigte Pakete
+├── run.bat              ← Bot starten
+├── check_feed.bat       ← nur den Feed testen
+├── panic_sell.bat       ← Notverkauf: alles glattstellen
+├── config.yaml          ← alle Einstellungen
+├── .env.example         ← Vorlage für RPC-URL und API-Key
 │
 ├── sniper/
-│   ├── safety.py        ← Sicherheitsnetz: nur lesende Zugriffe
-│   ├── config.py        ← liest und prüft config.yaml + .env
-│   ├── curve.py         ← Bonding Curve: dekodieren, Preis, Fill-Simulation
-│   ├── feed.py          ← PumpPortal-WebSocket (neue Launches)
-│   ├── rpc.py           ← lesender Solana-RPC-Client
-│   ├── strategy.py      ← Einstiegsfilter und Ausstiegsregeln
-│   ├── paper_engine.py  ← virtuelles Konto und Buchhaltung
-│   ├── market.py        ← Herzschlag-Schleife, verbindet alles
-│   ├── dashboard.py     ← Live-Anzeige in der Konsole
-│   └── main.py          ← Start, Abschaltung, Zusammenfassung
+│   ├── safety.py           ← Sperren: keine Keys, nur lesende RPC-Aufrufe
+│   ├── config.py           ← liest und prüft config.yaml + .env
+│   ├── curve.py            ← Bonding Curve: dekodieren, Preis, Fill-Rechnung
+│   ├── feed.py             ← PumpPortal-WebSocket (neue Launches)
+│   ├── rpc.py              ← lesender Solana-Client (Kurse, Kontostände, Tx)
+│   ├── strategy.py         ← Einstiegsfilter und Ausstiegsregeln
+│   ├── paper_engine.py     ← Simulation: virtuelles Konto
+│   ├── live_engine.py      ← ECHTGELD: echte Aufträge + Not-Aus
+│   ├── pumpportal_trade.py ← einziges Modul, das echtes Geld bewegt
+│   ├── market.py           ← Herzschlag-Schleife
+│   ├── dashboard.py        ← Live-Anzeige
+│   └── main.py             ← Start, Abschaltung, Zusammenfassung
 │
-└── tests/               ← 59 automatische Tests
+└── tests/                  ← 73 automatische Tests
 ```
 
-### Tests ausführen (optional)
+### Tests ausführen
 
 ```
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-Erwartete Ausgabe: `59 passed`.
+Erwartet: `73 passed`.
+
+### Simulation erzwingen
+
+Auch wenn `live_trading: true` in der Config steht:
+
+```
+.venv\Scripts\python.exe -m sniper.main --paper
+```

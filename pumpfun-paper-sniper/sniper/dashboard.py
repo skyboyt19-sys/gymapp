@@ -96,6 +96,16 @@ class Dashboard:
     # ------------------------------------------------------------------
     def _header(self) -> Panel:
         title = Text()
+        if self.cfg.live_trading:
+            title.append("  pump.fun SNIPER  ", style="bold white on red")
+            title.append("   ")
+            title.append("ECHTGELD - es wird echtes Geld gehandelt.",
+                         style="bold red")
+            engine = self.engine
+            if getattr(engine, "emergency_stop", False):
+                title.append("   NOT-AUS AKTIV", style="bold white on red")
+            return Panel(title, border_style="red")
+
         title.append("  pump.fun SNIPER  ", style="bold white on dark_green")
         title.append("   ")
         title.append(PAPER_TRADING_BANNER, style="bold yellow")
@@ -120,7 +130,8 @@ class Dashboard:
         table.add_column(justify="right")
 
         table.add_row(
-            "Guthaben (frei)", f"{self.engine.balance_sol:.4f} SOL",
+            "Wallet-Guthaben" if self.cfg.live_trading else "Guthaben (frei)",
+            f"{self.engine.balance_sol:.4f} SOL",
             "Gescannt", str(self.engine.tokens_scanned),
             "Feed", self._feed_status(),
         )
@@ -141,7 +152,10 @@ class Dashboard:
             "Beobachtet", str(len(self.market.candidates)),
         )
 
-        return Panel(table, title="Konto (virtuell)", border_style="cyan")
+        titel = "Bot-Wallet (ECHTES GELD)" if self.cfg.live_trading \
+            else "Konto (virtuell)"
+        return Panel(table, title=titel,
+                     border_style="red" if self.cfg.live_trading else "cyan")
 
     def _feed_status(self) -> Text:
         if self.feed.connected:

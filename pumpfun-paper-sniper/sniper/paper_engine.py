@@ -73,6 +73,12 @@ class Position:
     partial_done: bool = False   # Teilverkauf schon erfolgt?
     trailing_active: bool = False
 
+    #: True, solange ein echter Handelsauftrag zu dieser Position unterwegs
+    #: ist. Verhindert, dass der Bot denselben Verkauf mehrfach ausloest,
+    #: waehrend die erste Order noch bestaetigt wird. Im Simulationsmodus
+    #: immer False, weil dort alles sofort passiert.
+    pending: bool = False
+
     # -- abgeleitete Werte -------------------------------------------------
     @property
     def age_sec(self) -> float:
@@ -450,6 +456,49 @@ class PaperEngine:
         self.balance_sol += net_in
         self.total_fees_sol += quote.fee_sol + priority_fee
         return net_in
+
+    # ------------------------------------------------------------------
+    # Einheitliche Schnittstelle fuer die Markt-Schleife
+    # ------------------------------------------------------------------
+    # Die Markt-Schleife (market.py) soll nicht wissen muessen, ob simuliert
+    # oder echt gehandelt wird. Deshalb ruft sie nur diese drei Methoden auf.
+    # Im Simulationsmodus passiert alles sofort; im Echtgeld-Modus (live_engine)
+    # wird daraus ein Auftrag im Hintergrund.
+
+    def request_open(self, *, mint: str, symbol: str, name: str,
+                     bonding_curve: str, state: CurveState) -> None:
+        """Kaufauftrag - in der Simulation sofort ausgefuehrt."""
+        self.open_position(mint=mint, symbol=symbol, name=name,
+                           bonding_curve=bonding_curve, state=state)
+
+    def request_exit(self, position: Position, state: CurveState | None,
+                     *, fraction: float, reason: str) -> None:
+        """
+        Verkaufsauftrag. `fraction < 1.0` bedeutet Teilverkauf.
+        In der Simulation sofort ausgefuehrt.
+        """
+        if fraction >= 1.0 or state is None:
+            self.close_position(position, state, reason)
+        else:
+            self.partial_sell(position, state, fraction, reason)
+
+    def is_busy(self, mint: str) -> bool:
+        """
+        Laeuft gerade ein Auftrag zu diesem Token? In der Simulation nie -
+        dort gibt es keine Wartezeit zwischen Entscheidung und Ausfuehrung.
+        """
+        return False
+
+    async def shutdown(self, states: dict[str, CurveState | None]) -> None:
+        """Beim Beenden alle offenen Positionen schliessen."""
+        for position in list(self.positions.values()):
+            try:
+                self.close_position(
+                    position, states.get(position.bonding_curve),
+                    ExitReason.SHUTDOWN)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("Position %s konnte nicht geschlossen werden: %s",
+                              position.symbol, exc)
 
     # ------------------------------------------------------------------
     # Kursaktualisierung

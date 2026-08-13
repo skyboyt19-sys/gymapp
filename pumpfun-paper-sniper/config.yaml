@@ -9,15 +9,34 @@
 #   * Keine Tabs benutzen, nur Leerzeichen (YAML mag keine Tabs).
 #   * Nach dem Speichern den Bot neu starten, damit die Aenderung greift.
 #
-#  Der Bot handelt AUSSCHLIESSLICH mit virtuellem Geld. Es gibt in diesem
-#  Programm keinen einzigen Code-Pfad, der eine echte Transaktion senden
-#  koennte. Es wird nie nach einem Private Key oder einer Seed Phrase gefragt.
+#  Der Bot fragt NIE nach einem Private Key oder einer Seed Phrase - auch im
+#  Echtgeld-Modus nicht. Er signiert grundsaetzlich nichts selbst.
 # =============================================================================
 
 
+# =============================================================================
+#  BETRIEBSART  -  die wichtigste Einstellung der ganzen Datei
+# =============================================================================
+#
+#  false = SIMULATION (Standard)
+#          Es wird nichts gekauft und nichts verkauft. Der Bot rechnet alles
+#          gegen ein virtuelles Guthaben. Kostet nichts.
+#
+#  true  = ECHTGELD
+#          Kaeufe und Verkaeufe gehen wirklich raus, ueber die Bot-Wallet bei
+#          PumpPortal. Dafuer muessen in der .env stehen:
+#              PUMPPORTAL_API_KEY=...
+#              BOT_WALLET_PUBKEY=...
+#          Ohne diese beiden Eintraege startet der Bot nicht.
+#
+live_trading: false
+
+
 # ---- Konto / Groesse --------------------------------------------------------
-start_balance_sol: 10.0        # virtuelles Startguthaben
-position_size_sol: 0.15        # Einsatz pro Snipe
+start_balance_sol: 10.0        # virtuelles Startguthaben (nur Simulation!)
+                               # Im Echtgeld-Modus zaehlt, was wirklich auf der
+                               # Bot-Wallet liegt - dieser Wert wird ignoriert.
+position_size_sol: 0.15        # Einsatz pro Snipe (gilt in BEIDEN Betriebsarten)
 max_open_positions: 4
 max_snipes_per_min: 8          # Rate-Limit gegen Overtrading
 
@@ -45,10 +64,53 @@ rug_exit_drop_per_tick_pct: 20 # bei ploetzlichem Absturz sofort raus
 exit_on_net_sell_flip: true    # wenn Kaufdruck in Nettoverkaeufe kippt -> raus
 
 # ---- Ausfuehrungs-Simulation ------------------------------------------------
+#  Diese vier Werte betreffen NUR die Simulation (live_trading: false).
+#  Sie bilden nach, was ein echter Trade gekostet haette.
 fee_pct: 1.0
 slippage_pct: 3.0
 simulated_priority_fee_sol: 0.0005
 rpc_poll_ms: 800               # Kurs-Refresh fuer offene Positionen
+                               # (gilt in beiden Betriebsarten)
+
+
+# =============================================================================
+#  ECHTGELD-EINSTELLUNGEN  (greifen nur bei live_trading: true)
+# =============================================================================
+live:
+
+  # --- NOT-AUS ---------------------------------------------------------------
+  # Verliert die Bot-Wallet diesen Anteil ihres Startguthabens, verkauft der
+  # Bot alle offenen Positionen und beendet sich selbst.
+  # 0 = ausgeschaltet (nicht empfohlen).
+  max_total_loss_pct: 30
+
+  # --- Auftrags-Parameter ----------------------------------------------------
+  # Slippage-Obergrenze, die an PumpPortal uebergeben wird. Das ist NICHT
+  # slippage_pct von oben! Hier gilt: zu niedrig = viele Snipes schlagen fehl
+  # (kosten aber trotzdem Gebuehren), zu hoch = du bekommst schlechte Kurse.
+  # 10-20 % ist beim Sniping ueblich.
+  order_slippage_pct: 15
+
+  # Priority Fee pro Transaktion in SOL. Hoeher = deine Transaktion kommt
+  # schneller in einen Block. Das ist bei kleinen Positionen der groesste
+  # Kostenblock - sie faellt pro Auftrag an, unabhaengig von der Groesse.
+  priority_fee_sol: 0.0005
+
+  # --- Bestaetigung ----------------------------------------------------------
+  # So lange wartet der Bot darauf, dass ein Auftrag auf der Blockchain
+  # ankommt. Er prueft dabei den echten Kontostand der Wallet - die Antwort
+  # der Handels-API allein ist keine Garantie, dass es geklappt hat.
+  fill_confirm_timeout_sec: 25
+  fill_poll_interval_sec: 1.0
+
+  # Es wird nicht gekauft, wenn danach weniger als dieser Betrag auf der
+  # Wallet bliebe. Reserve fuer die Transaktionsgebuehren der Verkaeufe -
+  # ohne die kaemst du aus deinen Positionen nicht mehr raus.
+  min_wallet_balance_sol: 0.02
+
+  # Countdown vor dem ersten echten Trade. In dieser Zeit kannst du mit
+  # STRG+C noch abbrechen.
+  startup_countdown_sec: 8
 
 
 # =============================================================================

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -25,6 +26,69 @@ from .curve import CurveState, decode_bonding_curve
 from .safety import assert_read_only_rpc_method
 
 log = logging.getLogger(__name__)
+
+#: Standard-Token-Programm von Solana - zum Auflisten aller Token einer Wallet.
+TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+
+
+@dataclass(frozen=True)
+class TxEffect:
+    """
+    Was eine einzelne Transaktion mit der Bot-Wallet gemacht hat.
+
+    sol_delta   negativ = SOL ist abgeflossen (Kauf), positiv = zugeflossen
+                (Verkauf). Netzwerk- und Priority-Fees sind bereits enthalten.
+    token_delta positiv = Token erhalten, negativ = Token abgegeben.
+    success     False, wenn die Transaktion on-chain fehlgeschlagen ist.
+                Achtung: eine fehlgeschlagene Transaktion kostet trotzdem
+                Gebuehren - `sol_delta` ist dann leicht negativ.
+    """
+
+    success: bool
+    sol_delta: float
+    token_delta: float
+
+
+def _parse_tx_effect(result: dict, wallet: str, mint: str | None) -> TxEffect:
+    """Zerlegt die Antwort von getTransaction in einen `TxEffect`."""
+    meta = result.get("meta") or {}
+    success = meta.get("err") is None
+
+    # --- SOL-Veraenderung der Bot-Wallet ---
+    message = (result.get("transaction") or {}).get("message") or {}
+    keys: list[str] = []
+    for entry in message.get("accountKeys") or []:
+        keys.append(entry.get("pubkey", "") if isinstance(entry, dict) else str(entry))
+
+    sol_delta = 0.0
+    index = keys.index(wallet) if wallet in keys else 0
+    pre = meta.get("preBalances") or []
+    post = meta.get("postBalances") or []
+    if index < len(pre) and index < len(post):
+        sol_delta = (int(post[index]) - int(pre[index])) / 1_000_000_000
+
+    # --- Token-Veraenderung ---
+    token_delta = 0.0
+    if mint:
+        def summe(entries: list | None) -> float:
+            total = 0.0
+            for entry in entries or []:
+                if entry.get("mint") != mint:
+                    continue
+                # `owner` fehlt in aelteren RPC-Antworten - dann zaehlen wir
+                # den Eintrag mit, weil die Wallet der einzige Besitzer ist,
+                # dessen Konten hier auftauchen koennen.
+                owner = entry.get("owner")
+                if owner not in (None, wallet):
+                    continue
+                amount = (entry.get("uiTokenAmount") or {}).get("uiAmount")
+                total += float(amount or 0.0)
+            return total
+
+        token_delta = summe(meta.get("postTokenBalances")) \
+            - summe(meta.get("preTokenBalances"))
+
+    return TxEffect(success=success, sol_delta=sol_delta, token_delta=token_delta)
 
 
 @dataclass
@@ -105,7 +169,9 @@ class SolanaReadOnlyRpc:
         data = response.json()
         if "error" in data:
             raise RuntimeError(f"RPC-Fehler: {data['error']}")
-        return data.get("result", {})
+        # Kann bewusst None sein - z.B. bei getTransaction, solange die
+        # Transaktion noch nicht bestaetigt ist.
+        return data.get("result")
 
     # -- oeffentliche API --------------------------------------------------
     async def fetch_curve_states(
@@ -149,11 +215,135 @@ class SolanaReadOnlyRpc:
                     result.setdefault(address, None)
                 continue
 
-            accounts = raw.get("value") or []
+            accounts = (raw or {}).get("value") or []
             for address, account in zip(chunk, accounts):
                 result[address] = _decode_account(address, account)
 
         return result
+
+
+    # -- Kontostaende der Bot-Wallet (nur im Echtgeld-Modus gebraucht) -----
+    async def get_sol_balance(self, pubkey: str) -> float | None:
+        """
+        SOL-Guthaben einer Wallet. Gibt None zurueck, wenn die Abfrage
+        fehlschlaegt - der Aufrufer entscheidet dann, was zu tun ist.
+
+        Wird gebraucht, um nach einem Trade den tatsaechlichen Geldfluss zu
+        messen (Differenz vorher/nachher) und um den Not-Aus zu pruefen.
+        """
+        try:
+            result = await self._call("getBalance", [pubkey, {"commitment": "confirmed"}])
+            lamports = (result or {}).get("value")
+            if lamports is None:
+                return None
+            return int(lamports) / 1_000_000_000
+        except Exception as exc:  # noqa: BLE001
+            log.warning("SOL-Kontostand nicht abrufbar: %s", exc)
+            return None
+
+    async def get_token_balance(self, owner: str, mint: str) -> float | None:
+        """
+        Wie viele Token eines bestimmten Mints liegen in der Wallet?
+
+        Damit prueft der Bot, ob ein Kauf oder Verkauf wirklich angekommen ist
+        ("Fill-Bestaetigung"). Auf die Antwort der Handels-API allein kann man
+        sich nicht verlassen: eine Transaktion kann trotz "gesendet" auf der
+        Blockchain scheitern. Der Kontostand ist die Wahrheit.
+
+        Gibt 0.0 zurueck, wenn es (noch) kein Token-Konto gibt, und None, wenn
+        die Abfrage selbst fehlgeschlagen ist - das ist ein wichtiger
+        Unterschied: 0 heisst "nichts da", None heisst "weiss ich nicht".
+        """
+        try:
+            result = await self._call("getTokenAccountsByOwner", [
+                owner,
+                {"mint": mint},
+                {"encoding": "jsonParsed", "commitment": "confirmed"},
+            ])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Token-Kontostand nicht abrufbar: %s", exc)
+            return None
+
+        total = 0.0
+        for entry in (result or {}).get("value") or []:
+            try:
+                info = entry["account"]["data"]["parsed"]["info"]["tokenAmount"]
+                total += float(info.get("uiAmount") or 0.0)
+            except (KeyError, TypeError, ValueError):
+                continue
+        return total
+
+    async def list_token_holdings(self, owner: str) -> dict[str, float] | None:
+        """
+        Listet ALLE Token auf, die in der Wallet liegen (Mint -> Menge).
+
+        Wird vom Notverkauf-Skript gebraucht, um Reste einzusammeln, die der
+        Bot nicht mehr losgeworden ist. Gibt None zurueck, wenn die Abfrage
+        fehlschlaegt.
+        """
+        try:
+            result = await self._call("getTokenAccountsByOwner", [
+                owner,
+                {"programId": TOKEN_PROGRAM_ID},
+                {"encoding": "jsonParsed", "commitment": "confirmed"},
+            ])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Token-Bestaende nicht abrufbar: %s", exc)
+            return None
+
+        holdings: dict[str, float] = {}
+        for entry in (result or {}).get("value") or []:
+            try:
+                info = entry["account"]["data"]["parsed"]["info"]
+                amount = float(info["tokenAmount"].get("uiAmount") or 0.0)
+                if amount > 0:
+                    holdings[info["mint"]] = holdings.get(info["mint"], 0.0) + amount
+            except (KeyError, TypeError, ValueError):
+                continue
+        return holdings
+
+    async def get_transaction_effect(
+        self, signature: str, wallet: str, mint: str | None = None, *,
+        timeout_sec: float = 25.0, poll_interval_sec: float = 1.0,
+    ) -> "TxEffect | None":
+        """
+        Schlaegt eine bereits gesendete Transaktion nach und liest daraus den
+        EXAKTEN Geldfluss dieser einen Transaktion.
+
+        Warum das noetig ist: Man koennte den SOL-Aufwand auch aus der
+        Differenz des Wallet-Kontostands vorher/nachher berechnen. Das ist
+        aber falsch, sobald mehrere Auftraege gleichzeitig laufen - dann
+        mischt sich der Erloes eines Verkaufs in die Messung eines Kaufs, und
+        die Zahlen werden Unsinn. Die Transaktion selbst kennt dagegen nur
+        ihre eigenen Buchungen.
+
+        Nebenbei liefert sie die einzige verlaessliche Antwort auf die Frage
+        "hat es geklappt?": `meta.err`.
+
+        Gibt None zurueck, wenn die Transaktion nicht innerhalb der Zeit
+        auffindbar war (dann faellt der Aufrufer auf Kontostaende zurueck).
+        """
+        deadline = time.monotonic() + timeout_sec
+
+        while time.monotonic() < deadline:
+            try:
+                result = await self._call("getTransaction", [
+                    signature,
+                    {"encoding": "jsonParsed", "commitment": "confirmed",
+                     "maxSupportedTransactionVersion": 0},
+                ])
+            except Exception as exc:  # noqa: BLE001
+                log.debug("getTransaction fehlgeschlagen: %s", exc)
+                result = None
+
+            if result:
+                return _parse_tx_effect(result, wallet, mint)
+
+            await asyncio.sleep(poll_interval_sec)
+
+        log.warning("Transaktion %s war nach %.0fs noch nicht auffindbar.",
+                    signature[:16], timeout_sec)
+        return None
 
 
 def _decode_account(address: str, account: dict | None) -> CurveState | None:
