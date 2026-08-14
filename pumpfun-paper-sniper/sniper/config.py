@@ -49,6 +49,25 @@ class AdvancedConfig:
     #: Faellt der Wert darunter, ist die Kurve leergezogen.
     min_liquidity_coverage: float = 0.6
 
+    # --- Nachkaufen (Pyramiding) ---
+    #: Wie oft darf derselbe Token gekauft werden? 1 = kein Nachkaufen.
+    #: Nachkaeufe erhoehen das Risiko in EINEM Token - geht der hoch, gewinnst
+    #: du mehr; ruggt er, verlierst du das Vielfache.
+    max_entries_per_token: int = 2
+    #: Nachgekauft wird nur, wenn die bestehende Position mindestens so weit
+    #: im Plus steht. Verhindert das Verbilligen einer verlierenden Position -
+    #: nachgelegt wird nur bei Staerke, nie bei Schwaeche.
+    pyramid_min_gain_pct: float = 25.0
+
+    # --- Stillstands-Ausstieg ---
+    #: Passiert nach so vielen Sekunden nichts mehr, wird verkauft. Ersetzt
+    #: den frueher sehr kurzen Zeitstopp: Laeufer duerfen laufen, aber totes
+    #: Kapital blockiert keinen Platz mehr. 0 = aus.
+    stagnation_after_sec: float = 90.0
+    #: "Nichts passiert" heisst: Kurs bewegt sich in diesem Band um den
+    #: Einstieg (in Prozent, plus wie minus).
+    stagnation_band_pct: float = 15.0
+
     #: Obergrenze fuer das Momentum im Signalfenster. 0 = keine Obergrenze.
     #: Verhindert, dass der Bot die Spitze eines schon gelaufenen Spikes kauft.
     max_price_gain_in_window_pct: float = 0.0
@@ -257,6 +276,14 @@ def _build_advanced(raw: Any) -> AdvancedConfig:
         max_curve_layout_deviation_sol=float(
             raw.get("max_curve_layout_deviation_sol",
                     defaults.max_curve_layout_deviation_sol)),
+        max_entries_per_token=int(
+            raw.get("max_entries_per_token", defaults.max_entries_per_token)),
+        pyramid_min_gain_pct=float(
+            raw.get("pyramid_min_gain_pct", defaults.pyramid_min_gain_pct)),
+        stagnation_after_sec=float(
+            raw.get("stagnation_after_sec", defaults.stagnation_after_sec)),
+        stagnation_band_pct=float(
+            raw.get("stagnation_band_pct", defaults.stagnation_band_pct)),
         initial_real_token_reserves=int(
             raw.get("initial_real_token_reserves", defaults.initial_real_token_reserves)),
         pumpportal_ws_url=str(raw.get("pumpportal_ws_url", defaults.pumpportal_ws_url)),

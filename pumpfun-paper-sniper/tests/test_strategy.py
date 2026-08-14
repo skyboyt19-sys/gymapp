@@ -19,6 +19,7 @@ from sniper.strategy import (
     decide_exit,
     evaluate_entry,
     make_candidate,
+    should_add_to_position,
 )
 
 from .test_curve import (
@@ -611,13 +612,36 @@ def test_net_sell_flip_abschaltbar(tmp_path):
     assert decision.action == "hold"
 
 
-def test_harter_zeitstopp_greift_immer(tmp_path):
+def test_stillstand_beendet_tote_positionen(tmp_path):
     """
-    Kein anderer Grund trifft zu (Kurs seitwaerts, kein Abfluss) - nach
-    hard_time_stop_sec wird trotzdem verkauft.
+    Kurs seitwaerts, kein Abfluss: Nach `stagnation_after_sec` wird die
+    Position aufgeloest, damit der Platz wieder frei wird. Das ersetzt den
+    frueher sehr kurzen Zeitstopp - Laeufer duerfen laufen, Totes nicht.
     """
     cfg = make_config(tmp_path)
-    position = make_position(entry_price=1.0, last_price=1.02, age_sec=121.0)
+
+    # Vor Ablauf der Frist: halten.
+    jung = make_position(entry_price=1.0, last_price=1.02, age_sec=30.0)
+    assert decide_exit(jung, curve_at(10.0), cfg, tick_drop_pct=0.0,
+                       net_flow_sol=0.0).action == "hold"
+
+    # Danach: raus.
+    alt = make_position(entry_price=1.0, last_price=1.02, age_sec=121.0)
+    decision = decide_exit(alt, curve_at(10.0), cfg,
+                           tick_drop_pct=0.0, net_flow_sol=0.0)
+    assert decision.action == "close"
+    assert decision.reason == ExitReason.STAGNATION
+
+
+def test_stillstand_greift_nicht_bei_bewegung(tmp_path):
+    """
+    Eine Position, die sich deutlich bewegt hat, ist kein Stillstand - sie
+    laeuft bis zum harten Zeitstopp weiter.
+    """
+    cfg = make_config(tmp_path)
+    # +30 %: ausserhalb des Stillstandsbands, unter dem Take-Profit.
+    position = make_position(entry_price=1.0, last_price=1.30,
+                             age_sec=121.0, partial_done=True)
 
     decision = decide_exit(position, curve_at(10.0), cfg,
                            tick_drop_pct=0.0, net_flow_sol=0.0)
@@ -687,3 +711,58 @@ def test_flowtracker_ohne_daten_gibt_null():
     assert tracker.net_flow_sol(5.0, 1000.0) == 0.0
     tracker.add(1000.0, 30_000_000_000)
     assert tracker.net_flow_sol(5.0, 1000.0) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Nachkaufen (Pyramiding)
+# ---------------------------------------------------------------------------
+def test_nachkauf_nur_bei_deutlichem_gewinn(tmp_path):
+    """Nachgelegt wird nur bei Staerke - nie, um einen Verlust zu verbilligen."""
+    cfg = make_config(tmp_path)
+    state = curve_at(10.0)
+
+    # Im Minus: auf keinen Fall.
+    verlierer = make_position(entry_price=1.0, last_price=0.85)
+    darf, _ = should_add_to_position(verlierer, state, cfg, net_flow_sol=1.0)
+    assert darf is False
+
+    # Knapp im Plus, aber unter der Schwelle (25 %): noch nicht.
+    knapp = make_position(entry_price=1.0, last_price=1.10)
+    darf, _ = should_add_to_position(knapp, state, cfg, net_flow_sol=1.0)
+    assert darf is False
+
+    # Deutlich im Plus und Zufluss haelt an: ja.
+    laeufer = make_position(entry_price=1.0, last_price=1.40)
+    darf, grund = should_add_to_position(laeufer, state, cfg, net_flow_sol=1.0)
+    assert darf is True
+    assert "Einstieg" in grund
+
+
+def test_kein_nachkauf_wenn_der_kaufdruck_kippt(tmp_path):
+    """Laeuft der Abverkauf, steht der Ausstieg an - nicht ein weiterer Kauf."""
+    cfg = make_config(tmp_path)
+    position = make_position(entry_price=1.0, last_price=1.40)
+
+    darf, _ = should_add_to_position(position, curve_at(10.0), cfg,
+                                     net_flow_sol=-0.5)
+    assert darf is False
+
+
+def test_nachkauf_respektiert_das_limit(tmp_path):
+    cfg = make_config(tmp_path)
+    position = make_position(entry_price=1.0, last_price=1.40)
+    position.entries = cfg.advanced.max_entries_per_token
+
+    darf, _ = should_add_to_position(position, curve_at(10.0), cfg,
+                                     net_flow_sol=1.0)
+    assert darf is False
+
+
+def test_nachkauf_abschaltbar(tmp_path):
+    cfg = make_config(tmp_path)
+    object.__setattr__(cfg.advanced, "max_entries_per_token", 1)
+    position = make_position(entry_price=1.0, last_price=1.40)
+
+    darf, _ = should_add_to_position(position, curve_at(10.0), cfg,
+                                     net_flow_sol=1.0)
+    assert darf is False

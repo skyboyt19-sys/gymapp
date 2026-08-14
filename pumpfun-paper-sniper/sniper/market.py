@@ -36,6 +36,7 @@ from .strategy import (
     decide_exit,
     evaluate_entry,
     make_candidate,
+    should_add_to_position,
 )
 
 log = logging.getLogger(__name__)
@@ -125,7 +126,13 @@ class MarketLoop:
         # 5) Kandidaten aktualisieren und ggf. kaufen
         self._process_candidates(states, now)
 
-        # 6) Aufraeumen
+        # 6) Verlustgrenze pruefen (nur Echtgeld-Modus).
+        #    Hier und nicht in der Engine, weil nur die Markt-Schleife die
+        #    aktuellen Kurse hat - und ohne die laesst sich der Gesamtwert der
+        #    offenen Positionen nicht bestimmen.
+        self.engine.check_emergency_stop(self.last_states)
+
+        # 7) Aufraeumen
         self._cleanup(now)
 
     # ------------------------------------------------------------------
@@ -230,6 +237,14 @@ class MarketLoop:
         )
 
         if decision.action == "hold":
+            # Position bleibt offen - dann ist noch die Frage, ob nachgekauft
+            # werden soll. Bewusst NACH der Ausstiegspruefung: Wer gerade
+            # rausmuesste, darf auf keinen Fall nachlegen.
+            darf, grund = should_add_to_position(
+                position, state, self.cfg, net_flow_sol=net_flow)
+            if darf and state is not None:
+                log.info("Nachkauf %s: %s", position.symbol, grund)
+                self.engine.request_add(position, state)
             return
 
         log.info("Exit %s (%s): %s", position.symbol, decision.reason, decision.detail)

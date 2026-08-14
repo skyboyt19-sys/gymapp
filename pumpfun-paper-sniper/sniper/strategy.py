@@ -311,6 +311,50 @@ def evaluate_entry(candidate: Candidate, cfg: Config) -> EntryDecision:
 
 
 # ---------------------------------------------------------------------------
+# Nachkauf-Entscheidung ("Pyramiding")
+# ---------------------------------------------------------------------------
+def should_add_to_position(
+    position: Position, state: CurveState | None, cfg: Config,
+    *, net_flow_sol: float,
+) -> tuple[bool, str]:
+    """
+    Darf in eine laufende Position nachgekauft werden?
+
+    Grundsatz: nur bei STAERKE nachlegen, nie bei Schwaeche. Eine verlierende
+    Position zu verbilligen ist die klassische Art, aus einem kleinen Verlust
+    einen grossen zu machen - das macht dieser Bot ausdruecklich nicht.
+
+    Alle Bedingungen muessen erfuellt sein:
+      1. Nachkaufen ist ueberhaupt erlaubt und das Limit nicht erreicht
+      2. Die Position steht deutlich im Plus
+      3. Der Kaufdruck ist noch da (kein laufender Abverkauf)
+      4. Die Kurve ist handelbar und stimmig
+    """
+    if cfg.advanced.max_entries_per_token <= 1:
+        return False, ""
+    if position.entries >= cfg.advanced.max_entries_per_token:
+        return False, ""
+    if position.pending:
+        return False, ""
+    if state is None or not state.is_tradable:
+        return False, ""
+    if not state.is_standard_layout(cfg.advanced.max_curve_layout_deviation_sol):
+        return False, ""
+
+    change_pct = position.price_change_pct
+    if change_pct < cfg.advanced.pyramid_min_gain_pct:
+        return False, ""
+
+    # Kippt der Kaufdruck gerade, wird nicht nachgelegt - dann steht eher der
+    # Ausstieg an als ein weiterer Einstieg.
+    if net_flow_sol <= -abs(cfg.advanced.net_sell_flip_threshold_sol):
+        return False, ""
+
+    return True, (f"{change_pct:+.1f}% im Plus, Zufluss {net_flow_sol:+.2f} SOL "
+                  f"({position.entries + 1}. Einstieg)")
+
+
+# ---------------------------------------------------------------------------
 # Ausstiegsentscheidung
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -446,6 +490,21 @@ def decide_exit(
                 "close", ExitReason.NET_SELL_FLIP,
                 detail=f"{net_flow_sol:+.2f} SOL Nettoabfluss in "
                        f"{cfg.advanced.net_sell_flip_window_sec:.0f}s")
+
+    # --- 5b) Stillstand: es passiert einfach nichts mehr ------------------
+    #
+    # Ersetzt den frueher sehr kurzen Zeitstopp. Ein Laeufer soll laufen
+    # duerfen - aber eine Position, die nach anderthalb Minuten immer noch im
+    # selben engen Band um den Einstieg pendelt, ist totes Kapital und
+    # blockiert einen der Positionsplaetze.
+    stagnation_after = cfg.advanced.stagnation_after_sec
+    if stagnation_after > 0 and position.age_sec >= stagnation_after:
+        band = abs(cfg.advanced.stagnation_band_pct)
+        if abs(change_pct) <= band:
+            return ExitDecision(
+                "close", ExitReason.STAGNATION,
+                detail=f"seit {position.age_sec:.0f}s nur {change_pct:+.1f}% "
+                       f"(Band +/-{band:.0f}%)")
 
     # --- 6) Harter Zeitstopp ----------------------------------------------
     # Das letzte Wort. Der Bot haelt nie laenger als hard_time_stop_sec.

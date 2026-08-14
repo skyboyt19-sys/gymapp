@@ -340,7 +340,14 @@ def test_kein_doppelter_verkaufsauftrag(tmp_path):
 # Not-Aus
 # ---------------------------------------------------------------------------
 def test_not_aus_greift_bei_verlustgrenze(tmp_path):
-    """Bei -30 % vom Startkapital muss der Bot abschalten."""
+    """
+    Bei -30 % GESAMTWERT muss der Bot abschalten.
+
+    Gemessen wird bewusst der Gesamtwert (freies SOL + Wert der offenen
+    Positionen), nicht das freie Guthaben: Letzteres sinkt schon dadurch, dass
+    Positionen offen sind. Im Rauchtest meldete die alte Version so "-76.5 %
+    Verlust", waehrend zwei Positionen auf +660 % und +711 % standen.
+    """
     rpc = FakeRpc(sol=1.0)
     trader = FakeTrader()
     engine = make_engine(tmp_path, trader=trader, rpc=rpc, start_sol=1.0)
@@ -366,6 +373,9 @@ def test_not_aus_greift_bei_verlustgrenze(tmp_path):
 
     run(szenario())
 
+    # Position ist zu, es liegen nur noch 0.65 SOL auf der Wallet -> -35 %.
+    engine.check_emergency_stop({})
+
     assert engine.emergency_stop is True
     assert "Verlustgrenze" in engine.emergency_reason
     assert stop_event_gesetzt == [True]
@@ -388,6 +398,39 @@ def test_not_aus_greift_nicht_bei_kleinem_verlust(tmp_path):
         await engine._do_exit(position, curve_at(5.0), 1.0, ExitReason.STOP_LOSS)
 
     run(szenario())
+    engine.check_emergency_stop({})
+
+    assert engine.emergency_stop is False
+
+
+def test_not_aus_zaehlt_offene_positionen_als_wert(tmp_path):
+    """
+    Steckt das Geld in offenen Positionen, ist es NICHT verloren. Der Not-Aus
+    darf davon nicht ausgeloest werden - sonst schaltet der Bot ab, sobald er
+    einfach nur viele Positionen offen hat.
+    """
+    rpc = FakeRpc(sol=1.0)
+    engine = make_engine(tmp_path, rpc=rpc, start_sol=1.0)
+
+    # Fast alles ist investiert: nur 0.1 SOL frei, der Rest in Positionen.
+    # Die Tokenmenge wird aus dem echten Kurvenpreis abgeleitet, damit jede
+    # Position tatsaechlich rund 0.15 SOL wert ist.
+    zustand = curve_at(10.0)
+    tokens_fuer_015_sol = 0.15 / zustand.price_sol
+
+    engine.balance_sol = 0.1
+    engine.positions.clear()
+    for i in range(6):
+        pos = _oeffne_position(engine, rpc, tokens=tokens_fuer_015_sol, spent=0.15)
+        pos.mint = f"Mint{i}"
+        pos.bonding_curve = f"Curve{i}"
+        pos.last_price = zustand.price_sol
+        engine.positions[pos.mint] = pos
+    engine.positions.pop("MintA", None)
+
+    # Freies Guthaben allein waere -90 % und wuerde faelschlich ausloesen.
+    zustaende = {f"Curve{i}": zustand for i in range(6)}
+    engine.check_emergency_stop(zustaende)
 
     assert engine.emergency_stop is False
 

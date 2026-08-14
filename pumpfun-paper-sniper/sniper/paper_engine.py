@@ -42,6 +42,7 @@ class ExitReason:
     PARTIAL_TP = "PARTIAL"   # Teilverkauf
     TRAILING = "TRAIL"       # Trailing-Stop
     NET_SELL_FLIP = "FLIP"   # Kaufdruck ist in Nettoverkaeufe gekippt
+    STAGNATION = "FLAU"      # Kurs bewegt sich nicht mehr - Kapital freimachen
     LIQUIDITY = "LIQ"        # Kurve leergezogen: Kurs steht, Auszahlung fehlt
     TIME_STOP = "TIME"       # harter Zeitstopp
     MIGRATED = "MIGR"        # Token ist zu PumpSwap migriert
@@ -93,6 +94,12 @@ class Position:
 
     #: Womit der Einstieg begruendet wurde - fuer die Auswertung in trades.csv
     entry_snapshot: EntrySnapshot = field(default_factory=EntrySnapshot)
+
+    #: Wie oft in diesen Token schon gekauft wurde (1 = nur der Ersteinstieg).
+    #: Nachkaeufe erhoehen `tokens` und `sol_spent` derselben Position; der
+    #: Einstiegspreis wird zum gewichteten Mittel. Eine Position pro Token zu
+    #: fuehren haelt die Ausstiegslogik einfach - es gibt nur einen Verkauf.
+    entries: int = 1
 
     #: True, solange ein echter Handelsauftrag zu dieser Position unterwegs
     #: ist. Verhindert, dass der Bot denselben Verkauf mehrfach ausloest,
@@ -337,6 +344,62 @@ class PaperEngine:
                             tokens=quote.tokens_out, pnl_sol=0.0, pnl_pct=0.0)
         return position
 
+    def add_to_position(self, position: Position, state: CurveState) -> bool:
+        """
+        Kauft in eine bereits offene Position nach ("Pyramiding").
+
+        Es entsteht KEINE zweite Position: Menge und Einsatz werden derselben
+        Position zugeschlagen, der Einstiegspreis wird zum gewichteten Mittel.
+        Damit bleibt die Ausstiegslogik unveraendert - es gibt weiterhin genau
+        einen Verkauf pro Token.
+
+        Achtung, das ist die riskanteste Funktion im Programm: Sie haeuft
+        Kapital in EINEM Token an. Geht er hoch, gewinnst du mehrfach; ruggt
+        er, verlierst du mehrfach. Deshalb greifen davor gleich mehrere
+        Bremsen (max_entries_per_token, pyramid_min_gain_pct, Guthaben).
+        """
+        if position.entries >= self.cfg.advanced.max_entries_per_token:
+            return False
+
+        needed = self.cfg.position_size_sol + self.cfg.simulated_priority_fee_sol
+        if self.balance_sol < needed:
+            return False
+
+        try:
+            quote = simulate_buy(
+                state, self.cfg.position_size_sol,
+                fee_pct=self.cfg.fee_pct, slippage_pct=self.cfg.slippage_pct,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Nachkauf %s nicht simulierbar: %s", position.symbol, exc)
+            return False
+
+        priority_fee = self.cfg.simulated_priority_fee_sol
+        sol_spent = quote.sol_in + priority_fee
+        self.balance_sol -= sol_spent
+        self.total_fees_sol += quote.fee_sol + priority_fee
+
+        position.tokens += quote.tokens_out
+        position.tokens_initial += quote.tokens_out
+        position.sol_spent += sol_spent
+        position.entries += 1
+        # Gewichteter Mittelwert: alles Bezahlte geteilt durch alles Erhaltene.
+        position.entry_price = position.sol_spent / position.tokens_initial
+
+        log.info("NACHKAUF %s (%d. Einstieg) | %.4f SOL -> %.0f Token | "
+                 "neuer Mittelwert %.10f SOL | Guthaben %.4f SOL",
+                 position.symbol, position.entries, sol_spent,
+                 quote.tokens_out, position.entry_price, self.balance_sol)
+
+        self._write_csv_row(position, event="ADD", reason="PYRAMID",
+                            price=state.price_sol, sol_flow=-sol_spent,
+                            tokens=quote.tokens_out, pnl_sol=0.0, pnl_pct=0.0)
+        return True
+
+    def request_add(self, position: Position, state: CurveState) -> None:
+        """Nachkauf - in der Simulation sofort ausgefuehrt."""
+        self.add_to_position(position, state)
+
     # ------------------------------------------------------------------
     # Verkauf
     # ------------------------------------------------------------------
@@ -513,6 +576,16 @@ class PaperEngine:
         dort gibt es keine Wartezeit zwischen Entscheidung und Ausfuehrung.
         """
         return False
+
+    def check_emergency_stop(
+        self, states: dict[str, CurveState | None] | None = None
+    ) -> None:
+        """
+        Verlustgrenze pruefen. In der Simulation gibt es keinen Not-Aus -
+        es kann ja nichts verloren gehen. Die Methode existiert nur, damit die
+        Markt-Schleife beide Betriebsarten gleich behandeln kann.
+        """
+        return
 
     async def shutdown(self, states: dict[str, CurveState | None]) -> None:
         """Beim Beenden alle offenen Positionen schliessen."""

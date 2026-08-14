@@ -110,6 +110,17 @@ class LiveEngine(PaperEngine):
         self._spawn(self._do_open(mint, symbol, name, bonding_curve, state,
                                   snapshot or EntrySnapshot()))
 
+    def request_add(self, position: Position, state: CurveState) -> None:
+        """Startet einen Nachkauf im Hintergrund (siehe add_to_position)."""
+        if self.emergency_stop or position.pending or self.is_busy(position.mint):
+            return
+        if position.entries >= self.cfg.advanced.max_entries_per_token:
+            return
+        self._opening.add(position.mint)
+        self._spawn(self._do_open(
+            position.mint, position.symbol, position.name,
+            position.bonding_curve, state, position.entry_snapshot))
+
     def request_exit(self, position: Position, state: CurveState | None,
                      *, fraction: float, reason: str) -> None:
         """Startet einen Verkauf im Hintergrund."""
@@ -197,7 +208,30 @@ class LiveEngine(PaperEngine):
             )
             sol_spent = abs(sol_spent)
 
-            # 5) Position anlegen
+            # 5) Buchen. Existiert die Position schon, ist das ein Nachkauf:
+            #    Menge und Einsatz kommen dazu, der Einstiegspreis wird zum
+            #    gewichteten Mittel. So bleibt es eine Position pro Token und
+            #    die Ausstiegslogik aendert sich nicht.
+            bestehend = self.positions.get(mint)
+            if bestehend is not None:
+                dazu = max(0.0, tokens - bestehend.tokens)
+                bestehend.tokens = tokens
+                bestehend.tokens_initial += dazu
+                bestehend.sol_spent += sol_spent
+                bestehend.entries += 1
+                if bestehend.tokens_initial > 0:
+                    bestehend.entry_price = (
+                        bestehend.sol_spent / bestehend.tokens_initial)
+                log.info("NACHKAUF OK %s (%d. Einstieg) | %.4f SOL -> +%.0f Token "
+                         "| neuer Mittelwert %.10f SOL | %s",
+                         symbol, bestehend.entries, sol_spent, dazu,
+                         bestehend.entry_price, result.solscan_url or "")
+                self.balance_sol = max(0.0, self.balance_sol - sol_spent)
+                self._write_csv_row(bestehend, event="ADD", reason="PYRAMID",
+                                    price=state.price_sol, sol_flow=-sol_spent,
+                                    tokens=dazu, pnl_sol=0.0, pnl_pct=0.0)
+                return
+
             position = Position(
                 mint=mint, symbol=symbol, name=name, bonding_curve=bonding_curve,
                 tokens=tokens, tokens_initial=tokens,
@@ -329,16 +363,27 @@ class LiveEngine(PaperEngine):
                             tokens=position.sol_received,
                             pnl_sol=pnl_sol, pnl_pct=pnl_pct)
 
-        self._check_emergency_stop()
 
     # ==================================================================
     # Not-Aus
     # ==================================================================
-    def _check_emergency_stop(self) -> None:
+    def check_emergency_stop(
+        self, states: dict[str, CurveState | None] | None = None
+    ) -> None:
         """
-        Prueft nach jedem abgeschlossenen Trade, ob die Verlustgrenze aus der
-        config.yaml gerissen ist. Wenn ja, wird der Bot heruntergefahren -
-        offene Positionen verkauft er dabei noch.
+        Prueft, ob die Verlustgrenze aus der config.yaml gerissen ist. Wenn ja,
+        wird der Bot heruntergefahren - offene Positionen verkauft er dabei noch.
+
+        Verglichen wird der GESAMTWERT (freies SOL + Wert der offenen
+        Positionen), nicht das freie Guthaben.
+
+        Das war urspruenglich anders und war ein ernster Fehler: Freies SOL
+        sinkt schon dadurch, dass Positionen offen sind - das Geld ist nicht
+        weg, es steckt nur im Markt. Bei 10 Positionen zu 0.15 SOL sind 1.5 SOL
+        gebunden; der Not-Aus haette also sofort ausgeloest und alles zum
+        schlechtest moeglichen Zeitpunkt verkauft. Im Rauchtest passierte genau
+        das: gemeldet wurden "-76.5 % Verlust", waehrend zwei der Positionen
+        auf +660 % und +711 % standen.
         """
         if self.emergency_stop:
             return
@@ -347,14 +392,15 @@ class LiveEngine(PaperEngine):
         if limit_pct <= 0 or self.start_balance_sol <= 0:
             return
 
-        loss_pct = (1.0 - self.balance_sol / self.start_balance_sol) * 100.0
+        gesamtwert = self.equity_sol(states or {})
+        loss_pct = (1.0 - gesamtwert / self.start_balance_sol) * 100.0
         if loss_pct < limit_pct:
             return
 
         self.emergency_stop = True
         self.emergency_reason = (
             f"Verlustgrenze erreicht: {loss_pct:.1f} % vom Startkapital "
-            f"({self.start_balance_sol:.4f} -> {self.balance_sol:.4f} SOL). "
+            f"({self.start_balance_sol:.4f} -> {gesamtwert:.4f} SOL Gesamtwert). "
             f"Grenze war {limit_pct:.0f} %."
         )
         log.error("=" * 70)

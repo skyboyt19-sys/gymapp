@@ -119,6 +119,10 @@ def print_startup(cfg: Config) -> None:
     table.add_row("Take-Profit / Stop-Loss",
                   f"+{cfg.take_profit_pct:.0f} % / -{cfg.stop_loss_pct:.0f} %")
     table.add_row("Kurs-Refresh", f"alle {cfg.rpc_poll_ms} ms")
+    if cfg.advanced.max_entries_per_token > 1:
+        table.add_row("Nachkaufen",
+                      f"bis {cfg.advanced.max_entries_per_token}x je Token "
+                      f"(ab +{cfg.advanced.pyramid_min_gain_pct:.0f} %)")
     table.add_row("Feed", cfg.advanced.pumpportal_ws_url)
     table.add_row("RPC", _mask_rpc_url(cfg.rpc_url))
 
@@ -143,6 +147,26 @@ def print_startup(cfg: Config) -> None:
                             border_style="yellow"))
 
     console.print(Panel(table, title="Konfiguration", border_style="cyan"))
+
+    # Solana erzeugt nur etwa alle 400 ms einen Block. Schneller abzufragen
+    # liefert dieselben Daten mehrfach und kostet nur RPC-Kontingent.
+    if cfg.rpc_poll_ms < 400:
+        console.print(
+            f"[yellow]Hinweis:[/] rpc_poll_ms steht auf {cfg.rpc_poll_ms} ms. "
+            "Solana erzeugt nur etwa alle 400 ms einen neuen Block - schneller "
+            "abzufragen bringt keine neuen Kurse, sondern nur mehr Last.\n")
+
+    # Schnelles Polling auf der oeffentlichen RPC endet in 429-Fehlern, und
+    # dann rechnet der Bot mit veralteten Kursen. Das ist schlechter als
+    # langsamer zu pollen.
+    if cfg.rpc_poll_ms <= 500 and "api.mainnet-beta.solana.com" in cfg.rpc_url:
+        console.print(
+            "[yellow]Achtung:[/] Du pollst schnell, nutzt aber die oeffentliche "
+            "Solana-RPC. Die drosselt das sehr wahrscheinlich (429-Fehler), "
+            "und der Bot arbeitet dann mit veralteten Kursen.\n"
+            "  -> Entweder einen kostenlosen Key eintragen (siehe README, "
+            "'Schnellere RPC')\n"
+            "  -> oder rpc_poll_ms auf 800 zuruecksetzen.\n")
 
     if not cfg.live_trading and \
             cfg.max_open_positions * cfg.position_size_sol > cfg.start_balance_sol:

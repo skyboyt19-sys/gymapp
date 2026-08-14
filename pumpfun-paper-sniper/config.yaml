@@ -37,8 +37,10 @@ start_balance_sol: 10.0        # virtuelles Startguthaben (nur Simulation!)
                                # Im Echtgeld-Modus zaehlt, was wirklich auf der
                                # Bot-Wallet liegt - dieser Wert wird ignoriert.
 position_size_sol: 0.15        # Einsatz pro Snipe (gilt in BEIDEN Betriebsarten)
-max_open_positions: 4
-max_snipes_per_min: 8          # Rate-Limit gegen Overtrading
+max_open_positions: 10         # mehr Streuung: Memecoins sind Lotterielose,
+                               # und man braucht viele, um die seltenen
+                               # Gewinner zu erwischen
+max_snipes_per_min: 15         # Rate-Limit gegen Overtrading
 
 # ---- Signalfenster ----------------------------------------------------------
 signal_window_sec: 10          # so lange beobachten, bevor gekauft wird
@@ -52,14 +54,37 @@ min_price_gain_in_window_pct: 8 # Momentum: Preis zieht im Fenster an
 max_dev_holding_pct: 10        # Dev-Anteil (aus initialem Dev-Buy)
 skip_if_complete: true         # migrierte Token ignorieren
 
-# ---- Ausstieg (kurzfristig!) ------------------------------------------------
-hard_time_stop_sec: 120        # <<< Zwangsverkauf nach 2 Min - nie laenger halten
-take_profit_pct: 40
-partial_take_profit_pct: 25    # Haelfte bei +25% rausnehmen ...
-partial_take_profit_size: 0.5  # ... 50% der Position
-stop_loss_pct: 25              # eng
-trailing_activate_pct: 20      # ab +20% Gewinn Trailing an
-trailing_distance_pct: 15
+# ---- Ausstieg ---------------------------------------------------------------
+#
+#  GRUNDGEDANKE: Verluste klein halten, Gewinner laufen lassen.
+#
+#  Warum das so sein MUSS, nachgerechnet an 115 echten Trades:
+#  Bei einer Trefferquote von 16,5 % und einem Ø Verlust von -31 % braucht
+#  man einen Ø Gewinn von +159 %, nur um bei null herauszukommen.
+#
+#     Ø Gewinn  +40 %  ->  noetige Trefferquote 44,0 %   (unerreichbar)
+#     Ø Gewinn +100 %  ->  noetige Trefferquote 23,9 %
+#     Ø Gewinn +150 %  ->  noetige Trefferquote 17,3 %
+#     Ø Gewinn +250 %  ->  noetige Trefferquote 11,2 %
+#
+#  Ein Take-Profit von 40 % kann bei dieser Trefferquote also gar nicht
+#  aufgehen - egal wie gut die Einstiege werden.
+
+hard_time_stop_sec: 600        # 10 Min Obergrenze. Greift praktisch nie
+                               # (nur 3 von 115 Trades liefen ueber 60 s) -
+                               # der Stillstands-Ausstieg unten macht die
+                               # eigentliche Arbeit.
+take_profit_pct: 250           # echtes Laeufer-Ziel statt Skalpieren
+partial_take_profit_pct: 60    # bei +60 % einen Teil sichern ...
+partial_take_profit_size: 0.4  # ... aber nur 40 %, damit 60 % weiterlaufen
+stop_loss_pct: 30              # etwas weiter als vorher: Ein-/Ausstieg kosten
+                               # allein schon ~10 %, ein 25er-Stop reisst
+                               # dadurch bei normalem Rauschen
+trailing_activate_pct: 50      # ab +50 % Gewinn Trailing an ...
+trailing_distance_pct: 30      # ... mit 30 % Abstand. Das ist das eigentliche
+                               # Werkzeug, um Laeufer laufen zu lassen: Es gibt
+                               # keine Obergrenze nach oben, nur einen
+                               # mitwandernden Boden.
 rug_exit_drop_per_tick_pct: 20 # bei ploetzlichem Absturz sofort raus
 exit_on_net_sell_flip: true    # wenn Kaufdruck in Nettoverkaeufe kippt -> raus
 
@@ -69,8 +94,21 @@ exit_on_net_sell_flip: true    # wenn Kaufdruck in Nettoverkaeufe kippt -> raus
 fee_pct: 1.0
 slippage_pct: 3.0
 simulated_priority_fee_sol: 0.0005
-rpc_poll_ms: 800               # Kurs-Refresh fuer offene Positionen
-                               # (gilt in beiden Betriebsarten)
+rpc_poll_ms: 400               # Kurs-Refresh fuer offene Positionen.
+                               #
+                               # 400 ms ist die SINNVOLLE UNTERGRENZE: Solana
+                               # erzeugt nur etwa alle 400 ms einen Block.
+                               # Wer schneller abfragt, bekommt dieselben
+                               # Daten zweimal und verbrennt nur sein
+                               # RPC-Kontingent.
+                               #
+                               # ACHTUNG: Mit der oeffentlichen RPC ist 400 ms
+                               # bei vielen Positionen zu schnell - es kommen
+                               # dann 429-Fehler, und der Bot arbeitet mit
+                               # VERALTETEN Kursen. Das ist schlechter als
+                               # 800 ms. Fuer 400 ms brauchst du einen
+                               # kostenlosen Helius-/QuickNode-Key in der .env
+                               # (siehe README, "Schnellere RPC").
 
 
 # =============================================================================
@@ -165,6 +203,29 @@ advanced:
   # Niedriger setzen = spaeter raus. Hoeher als 0.85 nicht sinnvoll, dann
   # loest die normale Reibung den Ausstieg staendig aus.
   min_liquidity_coverage: 0.6
+
+  # --- Nachkaufen bei Staerke ("Pyramiding") ---
+  # Laeuft eine Position gut, kann der Bot ein zweites Mal in denselben Token
+  # kaufen. Menge und Einsatz werden derselben Position zugeschlagen, der
+  # Einstiegspreis wird zum gewichteten Mittel - es bleibt also eine Position
+  # mit einem Verkauf.
+  #
+  # RISIKO, klar gesagt: Das haeuft Kapital in EINEM Token an. Geht er hoch,
+  # verdienst du doppelt; ruggt er, verlierst du doppelt. Und Memecoins ruggen
+  # meistens. Deshalb steht das Limit auf 2 und nicht hoeher.
+  max_entries_per_token: 2     # 1 = Nachkaufen komplett aus
+  pyramid_min_gain_pct: 25     # nachgelegt wird NUR, wenn die Position schon
+                               # so weit im Plus steht. Eine verlierende
+                               # Position zu verbilligen macht dieser Bot nie -
+                               # das ist die klassische Art, aus einem kleinen
+                               # Verlust einen grossen zu machen.
+
+  # --- Stillstands-Ausstieg ---
+  # Passiert nach dieser Zeit immer noch nichts, wird verkauft. Damit darf ein
+  # Laeufer bis zu hard_time_stop_sec laufen, waehrend totes Kapital trotzdem
+  # zuegig wieder freigegeben wird und einen Positionsplatz raeumt.
+  stagnation_after_sec: 90     # 0 = aus
+  stagnation_band_pct: 15      # "nichts passiert" = Kurs zwischen -15% und +15%
 
   # --- Obergrenze fuers Momentum ---
   # Wie weit darf der Kurs im Signalfenster HOECHSTENS gestiegen sein?

@@ -267,6 +267,7 @@ def _reason_text(reason: str) -> Text:
         "RUG": "bold red",
         "LIQ": "bold red",
         "TIME": "yellow",
+        "FLAU": "grey70",
         "FLIP": "yellow",
         "MIGR": "magenta",
         "SHUTDOWN": "grey70",

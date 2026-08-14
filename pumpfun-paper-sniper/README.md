@@ -69,14 +69,15 @@ Standardmäßig läuft der Bot simuliert. Das Dashboard zeigt:
 
 | Kürzel | Bedeutung |
 |---|---|
-| `TP` | Take-Profit (+40 %) |
-| `PARTIAL` | Teilverkauf bei +25 % (halbe Position) |
+| `TP` | Take-Profit (+250 %) |
+| `PARTIAL` | Teilverkauf bei +60 % (40 % der Position) |
 | `TRAIL` | Trailing-Stop |
-| `SL` | Stop-Loss (−25 %) |
+| `SL` | Stop-Loss (−30 %) |
 | `RUG` | Kurssturz in einem einzigen Tick |
 | `LIQ` | Kurve leergezogen — der Kurs steht, aber es ist kein SOL mehr da, das ausgezahlt werden könnte |
 | `FLIP` | Kaufdruck in Nettoverkäufe gekippt |
-| `TIME` | Harter Zeitstopp (120 s) |
+| `FLAU` | Stillstand — nach 90 s immer noch im Band ±15 % um den Einstieg |
+| `TIME` | Harter Zeitstopp (600 s) |
 | `MIGR` | Token zu PumpSwap migriert |
 | `SHUTDOWN` | Du hast beendet |
 
@@ -268,10 +269,50 @@ Mit einem Texteditor öffnen. **Nur die Zahl hinter dem Doppelpunkt ändern, nie
 ```
 1. Migriert  →  2. Liquidität weg  →  3. Rug  →  4. Stop-Loss
             →  5. (Teil-)Take-Profit  →  6. Trailing
-            →  7. Net-Sell-Flip  →  8. Hard-Time-Stop
+            →  7. Net-Sell-Flip  →  8. Stillstand  →  9. Hard-Time-Stop
 ```
 
-Der **Hard-Time-Stop steht bewusst am Ende** — er ist das letzte Wort. Egal was der Kurs macht, nach 120 s wird verkauft.
+Der **Hard-Time-Stop steht bewusst am Ende** — er ist das letzte Wort. Egal was
+der Kurs macht, nach 600 s wird verkauft.
+
+## Warum der Take-Profit so hoch steht
+
+Nachgerechnet an 115 echten Trades: Bei 16,5 % Trefferquote und −31 % Ø Verlust
+braucht die Strategie **+159 % Ø Gewinn**, nur um bei null herauszukommen.
+
+| Ø Gewinn | nötige Trefferquote |
+|---|---|
+| +40 % | **44,0 %** — unerreichbar |
+| +100 % | 23,9 % |
+| +150 % | 17,3 % |
+| +250 % | 11,2 % |
+
+Ein Take-Profit von 40 % kann bei dieser Trefferquote nicht aufgehen, egal wie
+gut die Einstiege werden. Deshalb: Verluste eng begrenzen (−30 %), Gewinner über
+den **Trailing-Stop** laufen lassen (ab +50 %, 30 % Abstand) — nach oben offen.
+
+## Nachkaufen bei Stärke
+
+Läuft eine Position gut, kauft der Bot ein zweites Mal nach (`max_entries_per_token: 2`,
+erst ab +25 % im Plus). Menge und Einsatz kommen derselben Position zu, der
+Einstiegspreis wird zum gewichteten Mittel — es bleibt eine Position mit einem
+Verkauf.
+
+**Das Risiko klar gesagt:** Nachkaufen häuft Kapital in *einem* Token an. Läuft
+er, verdienst du doppelt; ruggt er, verlierst du doppelt. Und Memecoins ruggen
+meistens. Der Bot legt deshalb **nie** bei einer verlierenden Position nach —
+das wäre die klassische Art, aus einem kleinen Verlust einen großen zu machen.
+Abschalten mit `max_entries_per_token: 1`.
+
+## Kurs-Refresh: 400 ms ist die Untergrenze
+
+Solana erzeugt nur etwa alle 400 ms einen Block. Schneller abzufragen liefert
+dieselben Daten zweimal und verbrennt nur RPC-Kontingent.
+
+**Wichtig:** Mit der öffentlichen RPC ist 400 ms bei vielen Positionen zu
+schnell — es kommen 429-Fehler, und der Bot rechnet dann mit *veralteten*
+Kursen. Das ist schlechter als 800 ms. Für 400 ms brauchst du einen kostenlosen
+Key (→ Teil 7). Der Bot warnt dich beim Start, wenn beides nicht zusammenpasst.
 
 ---
 
