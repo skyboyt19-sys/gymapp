@@ -581,20 +581,87 @@ def test_trailing_erst_nach_aktivierungsschwelle(tmp_path):
 
 
 def test_net_sell_flip_loest_aus(tmp_path):
+    """
+    Die Kurve enthaelt 10 SOL, die Schwelle liegt also bei 10 % = 1.0 SOL.
+    Ein Abfluss darueber ist ein echter Abverkauf.
+    """
     cfg = make_config(tmp_path)
-    position = make_position(entry_price=1.0, last_price=1.05)
+    position = make_position(entry_price=1.0, last_price=1.05, age_sec=30.0)
 
     decision = decide_exit(position, curve_at(10.0), cfg,
-                           tick_drop_pct=0.0, net_flow_sol=-0.4)
+                           tick_drop_pct=0.0, net_flow_sol=-1.5)
 
     assert decision.action == "close"
     assert decision.reason == ExitReason.NET_SELL_FLIP
 
 
-def test_kleiner_abfluss_loest_noch_nicht_aus(tmp_path):
-    """Unterhalb der Schwelle (0.05 SOL) gilt es als Rauschen, nicht als Flip."""
+def test_flip_schwelle_waechst_mit_der_kurve(tmp_path):
+    """
+    Der teuerste Fehler aus dem Betrieb: Die Schwelle war eine feste Zahl
+    (0.05 SOL) und damit in jeder groesseren Kurve blosses Rauschen - 85 von
+    100 Positionen wurden dadurch nach ~5 Sekunden mit Ø -10 % geschlossen,
+    also ungefaehr genau der Gebuehr. Take-Profit und Trailing kamen nie zum Zug.
+
+    Derselbe Abfluss muss je nach Kurvengroesse unterschiedlich bewertet werden.
+    """
     cfg = make_config(tmp_path)
-    position = make_position(entry_price=1.0, last_price=1.05)
+    position = make_position(entry_price=1.0, last_price=1.05, age_sec=30.0)
+    abfluss = -0.4   # in einer kleinen Kurve viel, in einer grossen wenig
+
+    # Kleine Kurve (1 SOL drin): 0.4 SOL Abfluss sind 40 % -> raus.
+    klein = decide_exit(position, curve_at(1.0), cfg,
+                        tick_drop_pct=0.0, net_flow_sol=abfluss)
+    assert klein.action == "close"
+    assert klein.reason == ExitReason.NET_SELL_FLIP
+
+    # Grosse Kurve (10 SOL drin): dieselben 0.4 SOL sind 4 % -> Rauschen.
+    gross = decide_exit(position, curve_at(10.0), cfg,
+                        tick_drop_pct=0.0, net_flow_sol=abfluss)
+    assert gross.action == "hold"
+
+
+def test_schonzeit_verhindert_panikverkaeufe(tmp_path):
+    """
+    In den ersten Sekunden nach dem Kauf duerfen die weichen Ausstiege nicht
+    feuern. Aus dem Betrieb: 63 von 100 Positionen wurden in unter 5 Sekunden
+    geschlossen, KEINE mit Gewinn, zusammen 94 % des Gesamtverlusts.
+    """
+    cfg = make_config(tmp_path)
+    heftiger_abfluss = -3.0
+
+    # Frisch gekauft: trotz starkem Abfluss kein Flip.
+    frisch = make_position(entry_price=1.0, last_price=1.05, age_sec=3.0)
+    assert decide_exit(frisch, curve_at(10.0), cfg, tick_drop_pct=0.0,
+                       net_flow_sol=heftiger_abfluss).action == "hold"
+
+    # Nach der Schonzeit greift er.
+    reif = make_position(entry_price=1.0, last_price=1.05, age_sec=30.0)
+    decision = decide_exit(reif, curve_at(10.0), cfg, tick_drop_pct=0.0,
+                           net_flow_sol=heftiger_abfluss)
+    assert decision.action == "close"
+    assert decision.reason == ExitReason.NET_SELL_FLIP
+
+
+def test_notfaelle_greifen_auch_in_der_schonzeit(tmp_path):
+    """
+    Die Schonzeit gilt NUR fuer die weichen Ausstiege. Rug und Stop-Loss sind
+    echte Notfaelle und muessen sofort wirken - sonst waere sie gefaehrlich.
+    """
+    cfg = make_config(tmp_path)
+
+    rug = make_position(entry_price=1.0, last_price=1.05, age_sec=1.0)
+    assert decide_exit(rug, curve_at(10.0), cfg, tick_drop_pct=30.0,
+                       net_flow_sol=0.0).reason == ExitReason.RUG
+
+    sl = make_position(entry_price=1.0, last_price=0.6, age_sec=1.0)
+    assert decide_exit(sl, curve_at(10.0), cfg, tick_drop_pct=0.0,
+                       net_flow_sol=0.0).reason == ExitReason.STOP_LOSS
+
+
+def test_kleiner_abfluss_loest_noch_nicht_aus(tmp_path):
+    """Weit unterhalb der Schwelle gilt es als Rauschen, nicht als Flip."""
+    cfg = make_config(tmp_path)
+    position = make_position(entry_price=1.0, last_price=1.05, age_sec=30.0)
 
     decision = decide_exit(position, curve_at(10.0), cfg,
                            tick_drop_pct=0.0, net_flow_sol=-0.01)
@@ -604,7 +671,7 @@ def test_kleiner_abfluss_loest_noch_nicht_aus(tmp_path):
 
 def test_net_sell_flip_abschaltbar(tmp_path):
     cfg = make_config(tmp_path, exit_on_net_sell_flip=False)
-    position = make_position(entry_price=1.0, last_price=1.05)
+    position = make_position(entry_price=1.0, last_price=1.05, age_sec=30.0)
 
     decision = decide_exit(position, curve_at(10.0), cfg,
                            tick_drop_pct=0.0, net_flow_sol=-5.0)
@@ -743,8 +810,9 @@ def test_kein_nachkauf_wenn_der_kaufdruck_kippt(tmp_path):
     cfg = make_config(tmp_path)
     position = make_position(entry_price=1.0, last_price=1.40)
 
+    # 10 SOL in der Kurve -> Schwelle 1.0 SOL; 1.5 SOL Abfluss ist ein Flip.
     darf, _ = should_add_to_position(position, curve_at(10.0), cfg,
-                                     net_flow_sol=-0.5)
+                                     net_flow_sol=-1.5)
     assert darf is False
 
 

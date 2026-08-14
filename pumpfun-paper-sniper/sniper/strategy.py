@@ -102,6 +102,29 @@ class FlowTracker:
         return (self._samples[-1][1] - baseline_lamports) / LAMPORTS_PER_SOL
 
 
+def flip_threshold_sol(state: CurveState | None, cfg: Config) -> float:
+    """
+    Ab welchem Abfluss gilt der Kaufdruck als gekippt?
+
+    Die Schwelle richtet sich nach der GROESSE der Kurve, nicht nach einer
+    festen SOL-Zahl. Grund: 0.05 SOL sind in einer 4-SOL-Kurve 1.3 %, in einer
+    11-SOL-Kurve 0.5 % - in beiden Faellen blosses Rauschen, das jeder
+    Kleinverkaeufer ausloest.
+
+    Im Betrieb war das der teuerste Fehler des Bots: 85 von 100 Positionen
+    wurden nach im Schnitt 5 Sekunden per Flip geschlossen, mit Ø -10 % -
+    also ungefaehr genau der Gebuehr fuer Ein- und Ausstieg. Take-Profit und
+    Trailing kamen dadurch kein einziges Mal zum Zug.
+
+    Die absolute Zahl bleibt als Untergrenze fuer sehr kleine Kurven.
+    """
+    absolut = abs(cfg.advanced.net_sell_flip_threshold_sol)
+    if state is None:
+        return absolut
+    anteilig = state.real_sol * (cfg.advanced.net_sell_flip_threshold_pct / 100.0)
+    return max(absolut, anteilig)
+
+
 # ---------------------------------------------------------------------------
 # Kandidat: ein Token im Beobachtungsfenster
 # ---------------------------------------------------------------------------
@@ -285,7 +308,7 @@ def evaluate_entry(candidate: Candidate, cfg: Config) -> EntryDecision:
     if cfg.exit_on_net_sell_flip:
         window = cfg.advanced.net_sell_flip_window_sec
         recent_flow = candidate.flow.net_flow_sol(window)
-        if recent_flow <= -abs(cfg.advanced.net_sell_flip_threshold_sol):
+        if recent_flow <= -flip_threshold_sol(state, cfg):
             return EntryDecision(
                 False, f"Abverkauf laeuft bereits ({recent_flow:+.2f} SOL "
                        f"in {window:.0f}s)")
@@ -347,7 +370,7 @@ def should_add_to_position(
 
     # Kippt der Kaufdruck gerade, wird nicht nachgelegt - dann steht eher der
     # Ausstieg an als ein weiterer Einstieg.
-    if net_flow_sol <= -abs(cfg.advanced.net_sell_flip_threshold_sol):
+    if net_flow_sol <= -flip_threshold_sol(state, cfg):
         return False, ""
 
     return True, (f"{change_pct:+.1f}% im Plus, Zufluss {net_flow_sol:+.2f} SOL "
@@ -410,6 +433,16 @@ def decide_exit(
         return HOLD
 
     change_pct = position.price_change_pct
+
+    # Schonzeit: In den ersten Sekunden nach dem Kauf werden die "weichen"
+    # Ausstiege (Flip, Stillstand) nicht geprueft. Echte Notfaelle - Rug,
+    # Stop-Loss, leergezogene Kurve, Migration - greifen weiterhin sofort.
+    #
+    # Aus dem Betrieb: 63 von 100 Positionen wurden in unter 5 Sekunden
+    # geschlossen, KEINE davon mit Gewinn, zusammen 94 % des Gesamtverlusts.
+    # Bei im Schnitt -15 % Ausstieg ist Halten die bessere Wette: nach unten
+    # begrenzt der Stop-Loss auf -30 %, nach oben ist es offen.
+    schonzeit = position.age_sec < cfg.advanced.min_hold_before_soft_exit_sec
 
     # --- 0b) Liquiditaets-Notausgang --------------------------------------
     #
@@ -483,13 +516,14 @@ def decide_exit(
                 detail=f"-{drawdown:.1f}% vom Hoch (Limit {cfg.trailing_distance_pct}%)")
 
     # --- 5) Net-Sell-Flip: Kaufdruck kippt in Verkaufsdruck ----------------
-    if cfg.exit_on_net_sell_flip:
-        threshold = -abs(cfg.advanced.net_sell_flip_threshold_sol)
-        if net_flow_sol <= threshold:
+    if cfg.exit_on_net_sell_flip and not schonzeit:
+        schwelle = flip_threshold_sol(state, cfg)
+        if net_flow_sol <= -schwelle:
             return ExitDecision(
                 "close", ExitReason.NET_SELL_FLIP,
                 detail=f"{net_flow_sol:+.2f} SOL Nettoabfluss in "
-                       f"{cfg.advanced.net_sell_flip_window_sec:.0f}s")
+                       f"{cfg.advanced.net_sell_flip_window_sec:.0f}s "
+                       f"(Schwelle {schwelle:.2f} SOL)")
 
     # --- 5b) Stillstand: es passiert einfach nichts mehr ------------------
     #
@@ -498,7 +532,7 @@ def decide_exit(
     # selben engen Band um den Einstieg pendelt, ist totes Kapital und
     # blockiert einen der Positionsplaetze.
     stagnation_after = cfg.advanced.stagnation_after_sec
-    if stagnation_after > 0 and position.age_sec >= stagnation_after:
+    if stagnation_after > 0 and not schonzeit and position.age_sec >= stagnation_after:
         band = abs(cfg.advanced.stagnation_band_pct)
         if abs(change_pct) <= band:
             return ExitDecision(

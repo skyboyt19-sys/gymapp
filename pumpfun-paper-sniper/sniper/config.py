@@ -36,7 +36,18 @@ class AdvancedConfig:
 
     # Net-Sell-Flip
     net_sell_flip_window_sec: float = 5.0
+    #: Absolute Untergrenze der Flip-Schwelle (fuer sehr kleine Kurven).
     net_sell_flip_threshold_sol: float = 0.05
+    #: Eigentliche Schwelle: Anteil des ECHTEN SOL in der Kurve, der im
+    #: Fenster abfliessen muss, damit es als Abverkauf gilt.
+    #: Eine feste SOL-Schwelle taugt nicht - 0.05 SOL sind in einer 4-SOL-Kurve
+    #: 1.3 %, in einer 11-SOL-Kurve 0.5 %. Beides ist blosses Rauschen.
+    net_sell_flip_threshold_pct: float = 10.0
+
+    #: So lange nach dem Einstieg loesen die "weichen" Ausstiege (Flip,
+    #: Stillstand) nicht aus. Echte Notfaelle - Rug, Stop-Loss, leere Kurve,
+    #: Migration - greifen weiterhin sofort.
+    min_hold_before_soft_exit_sec: float = 15.0
 
     #: Wie weit ein Bonding-Curve-Account von der Standardbeziehung
     #: "virtuelles SOL - 30 == echtes SOL" abweichen darf, bevor der Token
@@ -268,6 +279,11 @@ def _build_advanced(raw: Any) -> AdvancedConfig:
             raw.get("net_sell_flip_window_sec", defaults.net_sell_flip_window_sec)),
         net_sell_flip_threshold_sol=float(
             raw.get("net_sell_flip_threshold_sol", defaults.net_sell_flip_threshold_sol)),
+        net_sell_flip_threshold_pct=float(
+            raw.get("net_sell_flip_threshold_pct", defaults.net_sell_flip_threshold_pct)),
+        min_hold_before_soft_exit_sec=float(
+            raw.get("min_hold_before_soft_exit_sec",
+                    defaults.min_hold_before_soft_exit_sec)),
         max_price_gain_in_window_pct=float(
             raw.get("max_price_gain_in_window_pct",
                     defaults.max_price_gain_in_window_pct)),

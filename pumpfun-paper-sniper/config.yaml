@@ -163,11 +163,31 @@ advanced:
   # die Bonding Curve geflossen ist. Wird daraus ein Abfluss (= es wird mehr
   # verkauft als gekauft), gilt der Kaufdruck als gekippt.
   net_sell_flip_window_sec: 5.0     # Beobachtungsfenster in Sekunden
-  net_sell_flip_threshold_sol: 0.05 # erst ab diesem Abfluss zaehlt es als Flip
-                                    # (verhindert Fehlalarm bei Mini-Verkaeufen)
-  # Dieselben zwei Werte bremsen auch den EINSTIEG: Laeuft der Abverkauf im
-  # Flip-Fenster schon, wird nicht mehr gekauft. Sonst kauft der Bot Spitzen,
-  # die gerade kippen, und verkauft sie eine Sekunde spaeter wieder.
+  #
+  # Die Schwelle richtet sich nach der GROESSE der Kurve, nicht nach einer
+  # festen SOL-Zahl. Das war der teuerste Fehler des Bots: Mit den frueheren
+  # 0.05 SOL fest lag die Schwelle bei 0.5-1.3 % der Kurve - also blosses
+  # Rauschen, das jeder Kleinverkaeufer ausloest.
+  # Im Betrieb: 85 von 100 Positionen wurden dadurch nach im Schnitt 5 Sekunden
+  # geschlossen, mit Ø -10 % - ungefaehr genau der Gebuehr fuer Ein- und
+  # Ausstieg. Take-Profit und Trailing kamen KEIN EINZIGES MAL zum Zug.
+  net_sell_flip_threshold_pct: 10   # 10 % des echten SOL in der Kurve muessen
+                                    # im Fenster abfliessen. Kleiner setzen =
+                                    # empfindlicher (Vorsicht!), groesser =
+                                    # traeger.
+  net_sell_flip_threshold_sol: 0.05 # absolute Untergrenze fuer winzige Kurven
+
+  # Schonzeit nach dem Kauf: So lange loesen die WEICHEN Ausstiege (Flip,
+  # Stillstand) nicht aus. Echte Notfaelle - Rug, Stop-Loss, leergezogene
+  # Kurve, Migration - greifen weiterhin sofort.
+  # Aus dem Betrieb: 63 von 100 Positionen wurden in unter 5 Sekunden
+  # geschlossen, KEINE einzige mit Gewinn, zusammen 94 % des Gesamtverlusts.
+  # Bei Ø -15 % Ausstieg ist Halten die bessere Wette: nach unten begrenzt der
+  # Stop-Loss auf -30 %, nach oben ist es offen.
+  min_hold_before_soft_exit_sec: 15
+
+  # Flip-Fenster und -Schwelle bremsen auch den EINSTIEG: Laeuft der Abverkauf
+  # schon, wird nicht gekauft. Sonst kauft der Bot Spitzen, die gerade kippen.
 
   # --- Plausibilitaetspruefung des Kurven-Accounts ---
   # Bei jeder normalen pump.fun-Kurve gilt eine feste Beziehung:
