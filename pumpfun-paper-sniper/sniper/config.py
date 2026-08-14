@@ -38,6 +38,11 @@ class AdvancedConfig:
     net_sell_flip_window_sec: float = 5.0
     net_sell_flip_threshold_sol: float = 0.05
 
+    #: Wie weit ein Bonding-Curve-Account von der Standardbeziehung
+    #: "virtuelles SOL - 30 == echtes SOL" abweichen darf, bevor der Token
+    #: als nicht auswertbar gilt und gar nicht erst gehandelt wird.
+    max_curve_layout_deviation_sol: float = 1.0
+
     #: Mindest-Deckung der Position durch echtes SOL in der Kurve.
     #: 1.0 = der Verkauf braechte genau das, was der Kurs verspricht.
     #: Normale Reibung (Gebuehr + Slippage) landet bei ca. 0.92.
@@ -249,6 +254,9 @@ def _build_advanced(raw: Any) -> AdvancedConfig:
                     defaults.max_price_gain_in_window_pct)),
         min_liquidity_coverage=float(
             raw.get("min_liquidity_coverage", defaults.min_liquidity_coverage)),
+        max_curve_layout_deviation_sol=float(
+            raw.get("max_curve_layout_deviation_sol",
+                    defaults.max_curve_layout_deviation_sol)),
         initial_real_token_reserves=int(
             raw.get("initial_real_token_reserves", defaults.initial_real_token_reserves)),
         pumpportal_ws_url=str(raw.get("pumpportal_ws_url", defaults.pumpportal_ws_url)),

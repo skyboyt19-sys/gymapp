@@ -46,18 +46,25 @@ class FlowTracker:
     """
     Merkt sich den Verlauf der SOL-Reserve einer Bonding Curve.
 
-    Warum das reicht, um Kaufdruck zu messen: Jeder Kauf schiebt SOL in die
-    Kurve, jeder Verkauf zieht SOL heraus. Steigt die Reserve, wird netto
-    gekauft; faellt sie, wird netto verkauft. Man braucht dafuer also keinen
-    (kostenpflichtigen) Trade-Stream - die Reserve-Aenderung genuegt.
+    Gemessen wird `real_sol_reserves` - also das SOL, das TATSAECHLICH in der
+    Kurve liegt. Jeder Kauf erhoeht es, jeder Verkauf senkt es. Die
+    Veraenderung IST damit per Definition der Nettofluss, und man braucht
+    keinen (kostenpflichtigen) Trade-Stream.
+
+    Frueher wurde stattdessen `virtual_sol_reserves` benutzt. Das ist zwar die
+    Groesse, aus der sich der Preis ergibt, aber als Flussmass gefaehrlich:
+    Weicht ein Account vom Standardlayout ab, liefert es Fantasiewerte - im
+    Betrieb wurden so "24.85 SOL Kaufdruck" bei einer Kurve gemeldet, in die
+    physikalisch nur 0.5 SOL passen. Das reale Feld ist durch die Realitaet
+    begrenzt und kann das nicht.
     """
 
     def __init__(self, max_samples: int = 240) -> None:
-        # (Zeitpunkt, virtuelle SOL-Reserve in Lamports)
+        # (Zeitpunkt, reale SOL-Reserve in Lamports)
         self._samples: deque[tuple[float, int]] = deque(maxlen=max_samples)
 
-    def add(self, timestamp: float, virtual_sol_reserves: int) -> None:
-        self._samples.append((timestamp, virtual_sol_reserves))
+    def add(self, timestamp: float, real_sol_reserves: int) -> None:
+        self._samples.append((timestamp, real_sol_reserves))
 
     @property
     def sample_count(self) -> int:
@@ -123,7 +130,8 @@ class Candidate:
     event: NewTokenEvent
     #: Preis beim ersten Kursabruf. 0.0, solange noch keiner vorliegt.
     start_price: float = 0.0
-    #: SOL-Reserve beim ersten Kursabruf (Lamports). None = noch keine Messung.
+    #: Reale SOL-Reserve beim ersten Kursabruf (Lamports).
+    #: None = noch keine Messung.
     start_sol_reserves: int | None = None
     flow: FlowTracker = field(default_factory=FlowTracker)
 
@@ -161,9 +169,9 @@ class Candidate:
                 self.start_price = price
 
         if self.start_sol_reserves is None:
-            self.start_sol_reserves = state.virtual_sol_reserves
+            self.start_sol_reserves = state.real_sol_reserves
 
-        self.flow.add(now, state.virtual_sol_reserves)
+        self.flow.add(now, state.real_sol_reserves)
 
     @property
     def price_gain_pct(self) -> float:
@@ -226,6 +234,14 @@ def evaluate_entry(candidate: Candidate, cfg: Config) -> EntryDecision:
     # 1) Migriert / abgeschlossen?
     if cfg.skip_if_complete and not state.is_tradable:
         return EntryDecision(False, "Token migriert (complete)")
+
+    # 1b) Verhaelt sich der Account ueberhaupt wie eine pump.fun-Kurve?
+    #     Wenn nicht, sind Preis, Progress und Kaufdruck allesamt Fantasie -
+    #     dann wird nicht gehandelt. (Siehe CurveState.is_standard_layout.)
+    if not state.is_standard_layout(cfg.advanced.max_curve_layout_deviation_sol):
+        return EntryDecision(
+            False, f"kein Standard-Kurvenlayout "
+                   f"(Abweichung {state.layout_deviation_sol:+.2f} SOL)")
 
     # 2) Alter: nur ganz frische Token
     age = candidate.age_sec

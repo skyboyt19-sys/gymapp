@@ -55,6 +55,14 @@ OFF_CREATOR = 0x31
 #: Kleinste sinnvolle Accountgroesse (bis inkl. `complete`).
 MIN_ACCOUNT_SIZE = OFF_COMPLETE + 1
 
+#: Virtuelle SOL-Reserve einer frischen pump.fun-Kurve (30 SOL).
+#: Daraus folgt eine harte Beziehung, die bei JEDER Standardkurve gilt:
+#:     virtual_sol_reserves - 30 SOL == real_sol_reserves
+#: Beide Werte bewegen sich bei Kauf und Verkauf um exakt denselben Betrag.
+#: Stimmt das nicht, ist es keine Standardkurve - oder wir lesen den Account
+#: falsch. In beiden Faellen sind alle abgeleiteten Zahlen wertlos.
+INITIAL_VIRTUAL_SOL_RESERVES = 30_000_000_000
+
 #: Standard-Startwert der realen Token-Reserve (fuer den Curve-Progress).
 #: Kommt aus dem Global-Account von pump.fun und ist ueber config.yaml
 #: (advanced.initial_real_token_reserves) ueberschreibbar.
@@ -111,6 +119,37 @@ class CurveState:
         """
         return not self.complete and self.virtual_token_reserves > 0 \
             and self.virtual_sol_reserves > 0
+
+    @property
+    def layout_deviation_sol(self) -> float:
+        """
+        Wie weit weicht dieser Account von der Standard-pump.fun-Kurve ab?
+
+        Bei jeder Standardkurve gilt exakt:
+            virtual_sol_reserves - 30 SOL == real_sol_reserves
+        Beide bewegen sich bei Kauf und Verkauf um denselben Betrag; die
+        Gebuehren gehen nicht in die Kurve, sondern an pump.fun.
+
+        Der Rueckgabewert ist die Abweichung in SOL. 0 = perfekt stimmig.
+        """
+        erwartet = self.virtual_sol_reserves - INITIAL_VIRTUAL_SOL_RESERVES
+        return (erwartet - self.real_sol_reserves) / LAMPORTS_PER_SOL
+
+    def is_standard_layout(self, toleranz_sol: float = 1.0) -> bool:
+        """
+        True, wenn der Account sich wie eine normale pump.fun-Kurve verhaelt.
+
+        Warum das geprueft werden muss: Im Betrieb tauchten Token auf, bei
+        denen "Progress 2.2 %" und "Kaufdruck 24.85 SOL" gleichzeitig gemeldet
+        wurden. Das schliesst sich aus - bei 2.2 % Progress passen rechnerisch
+        nur ~0.5 SOL in die Kurve, 24.85 SOL entspraechen 61 % Progress.
+
+        Solche Accounts sind entweder Kurven mit anderen Parametern oder ein
+        anderes Speicherlayout. In beiden Faellen sind ALLE Werte, die dieses
+        Programm daraus ableitet, wertlos - Preis, Progress und Kaufdruck
+        gleichermassen. Solche Token werden nicht gehandelt.
+        """
+        return abs(self.layout_deviation_sol) <= toleranz_sol
 
     @property
     def price_sol(self) -> float:

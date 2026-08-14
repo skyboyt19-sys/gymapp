@@ -214,7 +214,7 @@ class MarketLoop:
         if usable:
             self.engine.update_position_price(position, state.price_sol)  # type: ignore[union-attr]
             flow = self.position_flows.setdefault(position.mint, FlowTracker())
-            flow.add(now, state.virtual_sol_reserves)  # type: ignore[union-attr]
+            flow.add(now, state.real_sol_reserves)  # type: ignore[union-attr]
 
         flow = self.position_flows.get(position.mint)
         net_flow = (
@@ -293,7 +293,7 @@ class MarketLoop:
         # Muss VOR dem Kaufauftrag passieren: im Echtgeld-Modus laeuft der Kauf
         # im Hintergrund, und die Position existiert erst danach.
         flow = FlowTracker()
-        flow.add(now, candidate.last_state.virtual_sol_reserves)
+        flow.add(now, candidate.last_state.real_sol_reserves)
         self.position_flows[candidate.mint] = flow
 
         # Die Messwerte, die zum Kauf gefuehrt haben, wandern mit in die

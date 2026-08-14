@@ -131,6 +131,24 @@ advanced:
   # Flip-Fenster schon, wird nicht mehr gekauft. Sonst kauft der Bot Spitzen,
   # die gerade kippen, und verkauft sie eine Sekunde spaeter wieder.
 
+  # --- Plausibilitaetspruefung des Kurven-Accounts ---
+  # Bei jeder normalen pump.fun-Kurve gilt eine feste Beziehung:
+  #     virtuelles SOL - 30  ==  echtes SOL
+  # Beide bewegen sich bei Kauf und Verkauf um denselben Betrag.
+  #
+  # Stimmt das nicht, ist es entweder eine Kurve mit anderen Parametern oder
+  # der Account hat ein anderes Speicherlayout. In beiden Faellen sind ALLE
+  # Werte, die der Bot daraus ableitet, wertlos - Preis, Progress und
+  # Kaufdruck gleichermassen. Solche Token werden nicht gehandelt.
+  #
+  # (Im Testbetrieb meldete der Bot bei so einem Token "Progress 2.2 %" und
+  #  gleichzeitig "Kaufdruck 24.85 SOL" - bei 2.2 % passen aber nur ~0.5 SOL
+  #  in die Kurve. Er kaufte daraufhin Schrott.)
+  #
+  # Wert = erlaubte Abweichung in SOL. Groesser setzen heisst: mehr Token
+  # werden gehandelt, aber mit moeglicherweise unsinnigen Messwerten.
+  max_curve_layout_deviation_sol: 1.0
+
   # --- Liquiditaets-Notausgang ---
   # Der Kurs einer Bonding Curve wird aus den VIRTUELLEN Reserven gerechnet.
   # Auszahlen kann sie beim Verkauf aber hoechstens das ECHTE SOL, das drin

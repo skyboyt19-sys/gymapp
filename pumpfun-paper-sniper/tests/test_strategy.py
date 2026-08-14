@@ -21,7 +21,12 @@ from sniper.strategy import (
     make_candidate,
 )
 
-from .test_curve import INITIAL_VIRTUAL_SOL, INITIAL_VIRTUAL_TOKEN, build_account
+from .test_curve import (
+    INITIAL_REAL_TOKEN,
+    INITIAL_VIRTUAL_SOL,
+    INITIAL_VIRTUAL_TOKEN,
+    build_account,
+)
 from .test_paper_engine import curve_at, make_config
 
 from sniper.curve import decode_bonding_curve
@@ -282,6 +287,72 @@ def test_momentum_obergrenze_optional(tmp_path):
     decision = evaluate_entry(candidate, cfg)
     assert decision.buy is False
     assert "zu weit gelaufen" in decision.reason
+
+
+def test_skip_bei_unstimmigem_kurven_layout(tmp_path):
+    """
+    Regressionstest zu AGEN AI aus dem echten Betrieb:
+
+        SNIPE AGEN AI: Progress 2.2% | Kaufdruck 24.85 SOL | Momentum +85.3%
+
+    Bei 2.2 % Curve-Progress passen rechnerisch nur ~0.5 SOL in die Kurve;
+    24.85 SOL entspraechen 61 % Progress. Beide Zahlen stammen aus demselben
+    Account und schliessen sich aus - der Bot hat den Account also falsch
+    gelesen (andere Kurvenparameter oder anderes Speicherlayout).
+
+    Bei jeder Standardkurve gilt: virtuelles SOL - 30 == echtes SOL.
+    Stimmt das nicht, sind Preis, Progress und Kaufdruck allesamt wertlos und
+    der Token darf nicht gehandelt werden.
+    """
+    cfg = make_config(tmp_path)
+
+    # Ein Account, dessen virtuelle Reserven viel Zufluss behaupten, waehrend
+    # real fast nichts drin liegt - genau die Konstellation aus dem Log.
+    unstimmig = decode_bonding_curve(build_account(
+        v_sol=INITIAL_VIRTUAL_SOL + 25_000_000_000,   # "25 SOL geflossen"
+        v_tok=INITIAL_VIRTUAL_TOKEN,
+        r_tok=int(INITIAL_REAL_TOKEN * 0.978),        # ... aber Progress 2.2 %
+        r_sol=500_000_000,                            # ... und real nur 0.5 SOL
+    ))
+
+    assert unstimmig.is_standard_layout() is False
+    assert unstimmig.layout_deviation_sol == pytest.approx(24.5, abs=0.1)
+
+    event = make_event(received_at=time.monotonic() - 10.5)
+    candidate = make_candidate(event)
+    now = time.monotonic()
+    candidate.on_tick(unstimmig, now - 1.0)
+    candidate.on_tick(unstimmig, now)
+
+    decision = evaluate_entry(candidate, cfg)
+    assert decision.buy is False
+    assert "Kurvenlayout" in decision.reason
+
+
+def test_normale_kurven_gelten_als_stimmig(tmp_path):
+    """Gegenprobe ueber den gesamten Verlauf einer echten Kurve."""
+    for sol in (0.0, 0.5, 5.0, 20.0, 60.0):
+        state = curve_at(sol)
+        assert state.is_standard_layout(), f"bei {sol} SOL faelschlich abgelehnt"
+        assert state.layout_deviation_sol == pytest.approx(0.0, abs=1e-6)
+
+
+def test_kaufdruck_kann_das_echte_sol_nicht_uebersteigen(tmp_path):
+    """
+    Der Kaufdruck wird aus `real_sol_reserves` gemessen - also aus dem SOL,
+    das tatsaechlich in der Kurve liegt. Damit ist er automatisch durch die
+    Realitaet begrenzt und kann nicht mehr behaupten, es seien 24.85 SOL
+    geflossen, wo nur 0.5 SOL Platz haben.
+    """
+    candidate = make_candidate(make_event())
+    now = time.monotonic()
+    candidate.on_tick(curve_at(0.0), now - 1.0)
+    candidate.on_tick(curve_at(3.0), now)
+
+    state = candidate.last_state
+    assert state is not None
+    assert candidate.net_buy_volume_sol == pytest.approx(3.0, abs=0.01)
+    assert candidate.net_buy_volume_sol <= state.real_sol + 1e-9
 
 
 # ---------------------------------------------------------------------------

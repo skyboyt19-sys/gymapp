@@ -345,6 +345,15 @@ Im Dashboard steht dauerhaft `Feed: getrennt`. Der Bot versucht es automatisch i
 ### „RPC: x Fehler in Folge"
 Die öffentliche RPC drosselt. → Teil 7, oder `rpc_poll_ms` auf `1500` erhöhen.
 
+### „kein Standard-Kurvenlayout" im Log
+
+Kein Fehler, sondern eine Schutzprüfung. Bei jeder normalen pump.fun-Kurve
+gilt `virtuelles SOL − 30 = echtes SOL`. Passt das nicht zusammen, liest der
+Bot den Account falsch (andere Kurvenparameter oder anderes Speicherformat) —
+dann sind Preis, Progress und Kaufdruck alle wertlos, und er handelt den Token
+lieber nicht. Siehst du das sehr häufig, sag Bescheid: dann hat pump.fun
+vermutlich etwas am Account-Format geändert.
+
 ### Der Bot snipet nichts
 Meist korrekt — die Filter sind streng. Starte mit `--verbose` bzw. schau in `session.log`: dort steht für jeden übersprungenen Token der Grund, z. B. `SKIP ABC: Kaufdruck zu klein (0.42 < 1.5 SOL)`. Siehst du immer dieselbe Begründung, ist das die Stellschraube.
 
