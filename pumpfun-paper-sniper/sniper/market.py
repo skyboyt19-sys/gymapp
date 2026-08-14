@@ -35,6 +35,7 @@ from .strategy import (
     FlowTracker,
     decide_exit,
     evaluate_entry,
+    evaluate_survivor_entry,
     make_candidate,
     should_add_to_position,
 )
@@ -165,13 +166,23 @@ class MarketLoop:
         alle Kandidaten im Fenster + alle offenen Positionen.
         Doppelte werden entfernt, die Reihenfolge bleibt stabil.
         """
+        now = time.monotonic()
         seen: dict[str, None] = {}
+
+        # Offene Positionen immer - da zaehlt jede Sekunde.
         for position in self.engine.positions.values():
             if position.bonding_curve:
                 seen.setdefault(position.bonding_curve, None)
+
+        # Kandidaten nur, wenn sie faellig sind. In der Survivor-Strategie
+        # werden Token ueber viele Minuten beobachtet; wuerde man alle bei
+        # jedem Tick abfragen, waere jede RPC sofort im Rate-Limit.
         for candidate in self.candidates.values():
-            if candidate.bonding_curve:
-                seen.setdefault(candidate.bonding_curve, None)
+            if not candidate.bonding_curve:
+                continue
+            if candidate.next_poll_at > now:
+                continue
+            seen.setdefault(candidate.bonding_curve, None)
         return list(seen.keys())
 
     # ------------------------------------------------------------------
@@ -278,13 +289,19 @@ class MarketLoop:
     def _process_one_candidate(
         self, candidate: Candidate, states: dict[str, CurveState | None], now: float
     ) -> None:
+        # Wurde dieser Kandidat diesmal ueberhaupt abgefragt?
+        frisch = candidate.bonding_curve in states
         state = states.get(candidate.bonding_curve)
         if state is None:
             state = self.last_states.get(candidate.bonding_curve)
-        if state is not None:
+        if state is not None and frisch:
             candidate.on_tick(state, now)
 
-        # Beobachtungsfenster laeuft noch -> weiter zuschauen
+        if self.cfg.entry_mode == "survivor":
+            self._process_survivor_candidate(candidate, now)
+            return
+
+        # ---- Ausbruchsstrategie (momentum): einmal pruefen, dann verwerfen ----
         if candidate.age_sec < self.cfg.signal_window_sec:
             return
 
@@ -335,6 +352,65 @@ class MarketLoop:
             snapshot=snapshot,
         )
 
+    def _process_survivor_candidate(self, candidate: Candidate, now: float) -> None:
+        """
+        Watchlist-Logik der "Ueberlebenden"-Strategie.
+
+        Anders als beim Ausbruchskauf wird ein Token nicht einmal geprueft und
+        dann verworfen, sondern ueber Minuten beobachtet. Gekauft wird, sobald
+        er alt genug ist, nicht leerlaeuft und frischen Zufluss zeigt.
+        """
+        sv = self.cfg.survivor
+
+        # Naechste Abfrage einplanen - deutlich seltener als bei Positionen.
+        candidate.next_poll_at = now + sv.watchlist_poll_sec
+
+        # Zu alt: von der Watchlist nehmen.
+        if candidate.age_sec > sv.max_age_sec:
+            self.candidates.pop(candidate.mint, None)
+            self.engine.tokens_skipped += 1
+            return
+
+        state = candidate.last_state
+        if state is None:
+            return  # noch keine Kursdaten - weiter beobachten
+
+        # Endgueltig tot oder migriert: raus aus der Watchlist.
+        if not state.is_tradable:
+            self.candidates.pop(candidate.mint, None)
+            self.engine.tokens_skipped += 1
+            return
+
+        decision = evaluate_survivor_entry(candidate, self.cfg)
+        if not decision.buy:
+            # Noch nicht so weit - der Token bleibt auf der Watchlist, bis er
+            # zu alt wird. Genau das ist der Sinn der Strategie.
+            log.debug("Watchlist %s: %s", candidate.event.symbol, decision.reason)
+            return
+
+        self.candidates.pop(candidate.mint, None)
+        log.info("SNIPE (Ueberlebender) %s: %s",
+                 candidate.event.symbol, decision.reason)
+
+        flow = FlowTracker()
+        flow.add(now, state.real_sol_reserves)
+        self.position_flows[candidate.mint] = flow
+
+        self.engine.request_open(
+            mint=candidate.mint,
+            symbol=candidate.event.symbol,
+            name=candidate.event.name,
+            bonding_curve=candidate.bonding_curve,
+            state=state,
+            snapshot=EntrySnapshot(
+                progress_pct=state.progress_pct(
+                    self.cfg.advanced.initial_real_token_reserves),
+                net_buy_sol=candidate.flow.net_flow_sol(sv.inflow_window_sec),
+                momentum_pct=candidate.price_gain_pct,
+                dev_holding_pct=candidate.event.dev_holding_pct,
+            ),
+        )
+
     # ------------------------------------------------------------------
     # Aufraeumen
     # ------------------------------------------------------------------
@@ -344,13 +420,26 @@ class MarketLoop:
         (z.B. RPC kennt den Account dauerhaft nicht). Reines Sicherheitsnetz
         gegen wachsenden Speicherverbrauch bei langen Laufzeiten.
         """
-        max_lifetime = self.cfg.advanced.candidate_max_lifetime_sec
-        for mint, candidate in list(self.candidates.items()):
-            if candidate.age_sec > max_lifetime:
-                self.candidates.pop(mint, None)
-                self.engine.tokens_skipped += 1
-                log.debug("Kandidat %s verworfen (Zeitueberschreitung).",
-                          candidate.event.symbol)
+        if self.cfg.entry_mode == "survivor":
+            # Watchlist-Groesse begrenzen: Bei ~50 Launches pro Minute und 15
+            # Minuten Beobachtungsdauer waeren das sonst hunderte Accounts,
+            # die jede RPC ins Rate-Limit treiben. Die aeltesten fliegen zuerst
+            # raus - die sind ihrer Entscheidung ohnehin am naechsten.
+            grenze = self.cfg.survivor.watchlist_max_tokens
+            if len(self.candidates) > grenze:
+                zu_alt = sorted(self.candidates.values(),
+                                key=lambda c: c.age_sec, reverse=True)
+                for candidate in zu_alt[:len(self.candidates) - grenze]:
+                    self.candidates.pop(candidate.mint, None)
+                    self.engine.tokens_skipped += 1
+        else:
+            max_lifetime = self.cfg.advanced.candidate_max_lifetime_sec
+            for mint, candidate in list(self.candidates.items()):
+                if candidate.age_sec > max_lifetime:
+                    self.candidates.pop(mint, None)
+                    self.engine.tokens_skipped += 1
+                    log.debug("Kandidat %s verworfen (Zeitueberschreitung).",
+                              candidate.event.symbol)
 
         # Fluss-Historien ohne zugehoerige Position wegwerfen. Achtung: einen
         # gerade laufenden Kaufauftrag nicht mitloeschen - dessen Position gibt

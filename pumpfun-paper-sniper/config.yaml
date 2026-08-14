@@ -32,6 +32,41 @@
 live_trading: false
 
 
+# =============================================================================
+#  EINSTIEGS-STRATEGIE  -  die zweitwichtigste Einstellung
+# =============================================================================
+#
+#  "momentum"  = Ausbruchskauf (die urspruengliche Strategie)
+#                Kauft brandneue Token, sobald sie im Signalfenster Kaufdruck
+#                und Kursanstieg zeigen. Schnell, viele Trades.
+#
+#                EHRLICHE BILANZ aus 430 echten Trades: Diese Strategie hat
+#                durchgehend verloren, -20 bis -35 mSOL pro Trade, bei rund
+#                -15 mSOL reinen Gebuehren. Kein einziges Einstiegskriterium
+#                (Progress, Momentum, Kaufdruck, Dev-Anteil) zeigte einen
+#                Vorteil. Das Ergebnis war schlechter als Zufall - typisch
+#                dafuer, dass man beim Ausbruch die Ausstiegsliquiditaet
+#                derer ist, die gerade verteilen.
+#
+#  "survivor"  = Ueberlebenden-Kauf (Standard, siehe survivor:-Block unten)
+#                Kauft NICHT den ersten Ausbruch, sondern Token, die die
+#                ersten Minuten ueberstanden haben und DANACH wieder frischen
+#                Zufluss bekommen.
+#
+#                Warum: In denselben Messdaten sterben 34 % der Positionen in
+#                den ersten 30 Sekunden, aber nur noch 9 % im Bereich 60-120
+#                Sekunden. Wer die erste Minute uebersteht, ist ein anderer
+#                Kandidat.
+#
+#  KLARE ANSAGE: "survivor" ist der bessere Ansatz, aber auch er ist keine
+#  Gewinngarantie. Pump.fun-Sniping ist ein Negativsummenspiel - Gebuehren und
+#  Slippage kosten pro Runde rund 6-12 %. Lass es erst in der Simulation
+#  (live_trading: false) ein paar Stunden laufen und schau mit auswertung.bat
+#  nach, bevor du echtes Geld riskierst.
+#
+entry_mode: survivor
+
+
 # ---- Konto / Groesse --------------------------------------------------------
 start_balance_sol: 10.0        # virtuelles Startguthaben (nur Simulation!)
                                # Im Echtgeld-Modus zaehlt, was wirklich auf der
@@ -53,6 +88,53 @@ min_net_buy_volume_sol: 1.5    # Kaufdruck im Fenster (aus Reserve-Delta)
 min_price_gain_in_window_pct: 8 # Momentum: Preis zieht im Fenster an
 max_dev_holding_pct: 10        # Dev-Anteil (aus initialem Dev-Buy)
 skip_if_complete: true         # migrierte Token ignorieren
+
+# =============================================================================
+#  UEBERLEBENDEN-STRATEGIE  (greift nur bei entry_mode: survivor)
+# =============================================================================
+#  Die Filter oben (max_token_age_sec, min_net_buy_volume_sol,
+#  min_price_gain_in_window_pct ...) gelten dann NICHT - hier stehen die
+#  Kriterien, die stattdessen zaehlen.
+survivor:
+
+  # --- Alter: der Kern der Strategie -----------------------------------------
+  # Frueher als das wird nichts gekauft. Genau in diesem Fenster sterben die
+  # meisten Token, und genau dort hat die Ausbruchsstrategie ihr Geld verloren.
+  min_age_sec: 120
+  # Danach wird der Token nicht mehr beobachtet. Haelt die Watchlist klein
+  # und verhindert, dass der Bot Stunden auf einen toten Token wartet.
+  max_age_sec: 900
+
+  # --- Curve-Progress-Fenster ------------------------------------------------
+  # Weiter gefasst als beim Ausbruchskauf: Ueberlebende sind naturgemaess
+  # schon ein Stueck gelaufen. Nach oben trotzdem begrenzt - kurz vor der
+  # Migration ist die Luft raus.
+  min_curve_progress_pct: 5
+  max_curve_progress_pct: 60
+
+  # --- Frischer Zufluss ------------------------------------------------------
+  # Alt und stabil allein reicht nicht: Es muss GERADE WIEDER gekauft werden.
+  inflow_window_sec: 60          # ueber dieses Fenster wird gemessen
+  min_inflow_pct_of_curve: 12    # so viel muss zugeflossen sein - als ANTEIL
+                                 # des SOL in der Kurve, nie als feste Zahl.
+                                 # Eine feste SOL-Schwelle war der teuerste
+                                 # Fehler dieses Projekts (siehe advanced:).
+                                 # Kleiner = mehr Trades, groesser = strenger.
+
+  # --- Laeuft die Kurve leer? ------------------------------------------------
+  # Ein Token, aus dem gerade SOL abgezogen wird, ist kein Ueberlebender -
+  # auch wenn er alt genug ist. Abstand des echten SOL zu seinem Hoechststand.
+  max_drain_from_peak_pct: 12
+
+  # --- Last auf der RPC ------------------------------------------------------
+  # Bei ~50 Launches pro Minute und 15 Minuten Beobachtung waeren das sonst
+  # hunderte Accounts pro Abfrage. Die aeltesten fliegen zuerst von der Liste.
+  watchlist_max_tokens: 150
+  # Wie oft ein beobachteter Token abgefragt wird. Hier zaehlen Minuten, nicht
+  # Millisekunden - offene Positionen werden weiterhin mit rpc_poll_ms
+  # abgefragt. Kleiner setzen kostet nur RPC-Kontingent.
+  watchlist_poll_sec: 3.0
+
 
 # ---- Ausstieg ---------------------------------------------------------------
 #

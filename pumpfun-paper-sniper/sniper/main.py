@@ -112,9 +112,23 @@ def print_startup(cfg: Config) -> None:
         table.add_row("Betriebsart", "[bold green]SIMULATION[/]")
         table.add_row("Startguthaben", f"{cfg.start_balance_sol:.4f} SOL (virtuell)")
 
+    # Welche Einstiegsstrategie laeuft, muss auf den ersten Blick sichtbar sein:
+    # die beiden Modi verhalten sich voellig unterschiedlich, und im
+    # Survivor-Modus vergehen die ersten Minuten ohne einen einzigen Trade.
+    if cfg.entry_mode == "survivor":
+        table.add_row("Einstieg", "[bold cyan]UEBERLEBENDE[/] (survivor)")
+        table.add_row("  kauft fruehestens ab",
+                      f"{cfg.survivor.min_age_sec:.0f} s Token-Alter")
+        table.add_row("  verlangt Zufluss",
+                      f"{cfg.survivor.min_inflow_pct_of_curve:.0f} % der Kurve "
+                      f"in {cfg.survivor.inflow_window_sec:.0f} s")
+    else:
+        table.add_row("Einstieg", "AUSBRUCH (momentum)")
+
     table.add_row("Einsatz pro Snipe", f"{cfg.position_size_sol:.4f} SOL")
     table.add_row("Max. offene Positionen", str(cfg.max_open_positions))
-    table.add_row("Signalfenster", f"{cfg.signal_window_sec:.0f} s")
+    if cfg.entry_mode != "survivor":
+        table.add_row("Signalfenster", f"{cfg.signal_window_sec:.0f} s")
     table.add_row("Zwangsverkauf nach", f"{cfg.hard_time_stop_sec:.0f} s")
     table.add_row("Take-Profit / Stop-Loss",
                   f"+{cfg.take_profit_pct:.0f} % / -{cfg.stop_loss_pct:.0f} %")

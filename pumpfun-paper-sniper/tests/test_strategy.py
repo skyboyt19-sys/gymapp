@@ -18,6 +18,7 @@ from sniper.strategy import (
     FlowTracker,
     decide_exit,
     evaluate_entry,
+    evaluate_survivor_entry,
     make_candidate,
     should_add_to_position,
 )
@@ -900,3 +901,120 @@ def test_drain_ausstieg_abschaltbar(tmp_path):
     decision = decide_exit(position, geleert, cfg,
                            tick_drop_pct=0.0, net_flow_sol=0.0)
     assert decision.reason != ExitReason.DRAIN
+
+
+# ---------------------------------------------------------------------------
+# "Ueberlebenden"-Strategie (entry_mode: survivor)
+# ---------------------------------------------------------------------------
+def survivor_kandidat(*, alter_sec: float, sol_start: float, sol_jetzt: float,
+                      peak_sol: float | None = None, **event_overrides):
+    """
+    Baut einen Kandidaten mit realistischem Verlauf fuer die Survivor-Pruefung.
+
+    Wichtig: Der Bot misst die Watchlist alle paar Sekunden, nicht zweimal in
+    einer Minute. Ein Fixture mit zwei weit auseinanderliegenden Messpunkten
+    wuerde das Zeitfenster der Flussmessung nicht abdecken und ein falsches
+    Ergebnis liefern - deshalb hier ein dichter Verlauf wie im Betrieb.
+    """
+    event = make_event(received_at=time.monotonic() - alter_sec, **event_overrides)
+    candidate = make_candidate(event)
+    now = time.monotonic()
+
+    # Ein Messpunkt knapp VOR dem Fenster, damit es sauber begrenzt ist.
+    candidate.on_tick(curve_at(sol_start), now - 65.0)
+
+    # Dann alle 5 Sekunden ueber das 60-Sekunden-Fenster.
+    schritte = 12
+    for i in range(schritte + 1):
+        t = now - 55.0 + i * (55.0 / schritte)
+        anteil = i / schritte
+        if peak_sol is not None:
+            # erst hoch bis zum Hoechststand, dann zurueck auf den Jetzt-Wert
+            wert = (sol_start + (peak_sol - sol_start) * (anteil / 0.5)
+                    if anteil <= 0.5 else
+                    peak_sol + (sol_jetzt - peak_sol) * ((anteil - 0.5) / 0.5))
+        else:
+            wert = sol_start + (sol_jetzt - sol_start) * anteil
+        candidate.on_tick(curve_at(wert), t)
+    return candidate
+
+
+def test_survivor_kauft_ueberlebende_mit_frischem_zufluss(tmp_path):
+    """Alt genug, laeuft nicht leer, bekommt frischen Zufluss -> Kauf."""
+    cfg = make_config(tmp_path)
+    object.__setattr__(cfg, "entry_mode", "survivor")
+
+    # 3 Minuten alt, in der letzten Minute 2 SOL Zufluss auf 8 SOL Kurve.
+    candidate = survivor_kandidat(alter_sec=180.0, sol_start=6.0, sol_jetzt=8.0)
+
+    decision = evaluate_survivor_entry(candidate, cfg)
+    assert decision.buy is True, decision.reason
+    assert "Alter" in decision.reason
+
+
+def test_survivor_kauft_keine_frischen_token(tmp_path):
+    """
+    Der Kern der Strategie: Ein 20 Sekunden alter Token wird NICHT gekauft,
+    egal wie gut er aussieht. Genau dort sterben 34 % der Positionen.
+    """
+    cfg = make_config(tmp_path)
+    object.__setattr__(cfg, "entry_mode", "survivor")
+
+    candidate = survivor_kandidat(alter_sec=20.0, sol_start=6.0, sol_jetzt=8.0)
+
+    decision = evaluate_survivor_entry(candidate, cfg)
+    assert decision.buy is False
+    assert "zu jung" in decision.reason
+
+
+def test_survivor_kauft_nichts_das_leerlaeuft(tmp_path):
+    """
+    Ein Token, aus dem gerade SOL abgezogen wird, ist kein Ueberlebender -
+    auch wenn er alt genug ist.
+    """
+    cfg = make_config(tmp_path)
+    object.__setattr__(cfg, "entry_mode", "survivor")
+
+    # Hoch bei 12 SOL, jetzt nur noch 8 -> 33 % unter dem Hoechststand.
+    candidate = survivor_kandidat(alter_sec=180.0, sol_start=6.0,
+                                  peak_sol=12.0, sol_jetzt=8.0)
+
+    decision = evaluate_survivor_entry(candidate, cfg)
+    assert decision.buy is False
+    assert "leer" in decision.reason
+
+
+def test_survivor_verlangt_frischen_zufluss(tmp_path):
+    """Alt und stabil reicht nicht - es muss gerade wieder gekauft werden."""
+    cfg = make_config(tmp_path)
+    object.__setattr__(cfg, "entry_mode", "survivor")
+
+    # Seit einer Minute passiert nichts.
+    candidate = survivor_kandidat(alter_sec=180.0, sol_start=8.0, sol_jetzt=8.05)
+
+    decision = evaluate_survivor_entry(candidate, cfg)
+    assert decision.buy is False
+    assert "Zufluss" in decision.reason
+
+
+def test_survivor_zufluss_schwelle_ist_relativ(tmp_path):
+    """
+    Derselbe Fehler wie viermal zuvor darf sich nicht wiederholen: Die
+    Zuflussschwelle ist ein ANTEIL der Kurve, keine feste SOL-Zahl.
+    """
+    cfg = make_config(tmp_path)
+    object.__setattr__(cfg, "entry_mode", "survivor")
+    zufluss = 1.0   # dieselbe absolute Menge in zwei Kurvengroessen
+
+    # Kleine Kurve (3 -> 4 SOL): 1 SOL ist viel -> Kauf.
+    klein = survivor_kandidat(alter_sec=180.0, sol_start=3.0, sol_jetzt=3.0 + zufluss)
+    assert evaluate_survivor_entry(klein, cfg).buy is True
+
+    # Grosse Kurve (15 -> 16 SOL): dieselbe 1 SOL ist wenig -> kein Kauf.
+    # 15 SOL liegen noch im Progress-Fenster der Strategie; sonst wuerde der
+    # Kandidat schon vorher wegen Progress abgelehnt und der Test pruefte
+    # nicht mehr das, wofuer er da ist.
+    gross = survivor_kandidat(alter_sec=180.0, sol_start=15.0, sol_jetzt=15.0 + zufluss)
+    entscheidung = evaluate_survivor_entry(gross, cfg)
+    assert entscheidung.buy is False
+    assert "Zufluss" in entscheidung.reason

@@ -241,16 +241,81 @@ Simulation Daten sammelst, tut es dein PC genauso gut.
 
 Mit einem Texteditor öffnen. **Nur die Zahl hinter dem Doppelpunkt ändern, niemals Tabulatoren benutzen.** Änderungen greifen nach einem Neustart.
 
+## Die Einstiegs-Strategie: `entry_mode`
+
+Ganz oben in der `config.yaml` steht **die zweitwichtigste Einstellung** der
+Datei:
+
+```yaml
+entry_mode: survivor      # oder: momentum
+```
+
+### `momentum` — Ausbruchskauf (die ursprüngliche Strategie)
+
+Kauft brandneue Token, sobald sie im Signalfenster Kaufdruck und Kursanstieg
+zeigen. Schnell, viele Trades — und **sie hat verloren.**
+
+Bilanz aus 430 echten Trades: **−20 bis −35 mSOL pro Trade**, bei rund
+−15 mSOL reinen Gebühren. Kein einziges Einstiegskriterium (Progress,
+Momentum, Kaufdruck, Dev-Anteil) zeigte einen Vorteil — kein Bereich war
+besser als der Durchschnitt. Das Ergebnis war **schlechter als Zufall**, und
+genau so sieht es aus, wenn man beim Ausbruch die Ausstiegsliquidität für die
+ist, die gerade verteilen.
+
+### `survivor` — Überlebenden-Kauf (Standard)
+
+Kauft **nicht** den ersten Ausbruch, sondern Token, die die ersten Minuten
+überstanden haben und **danach wieder** frischen Zufluss bekommen.
+
+Der Grund steht in denselben Messdaten:
+
+| Haltedauer beim Ausstieg | Anteil der Positionen, die dort sterben |
+|---|---|
+| 0–30 s | **34 %** |
+| 60–120 s | **9 %** |
+
+Wer die erste Minute übersteht, ist ein anderer Kandidat. Also wird gewartet.
+
+Ein Token wird gekauft, wenn **alle vier** Punkte stimmen:
+
+1. **Alt genug** — mindestens `min_age_sec: 120`, höchstens `max_age_sec: 900`.
+2. **Noch Luft** — Curve-Progress zwischen 5 % und 60 %.
+3. **Läuft nicht leer** — das echte SOL in der Kurve steht höchstens
+   `max_drain_from_peak_pct: 12` % unter seinem Höchststand.
+4. **Frischer Zufluss** — in den letzten 60 s sind mindestens
+   `min_inflow_pct_of_curve: 12` % des Kurven-SOL zugeflossen. Ein *Anteil*,
+   keine feste SOL-Zahl — eine feste Schwelle war der teuerste Fehler dieses
+   Projekts (siehe Teil 10).
+
+Statt jeden Token einmal zu prüfen und dann wegzuwerfen, führt der Bot in
+diesem Modus eine **Watchlist**: bis zu `watchlist_max_tokens: 150` Token
+werden alle `watchlist_poll_sec: 3` Sekunden nachgeschaut, bis sie kaufreif
+oder zu alt sind. Offene Positionen werden davon nicht ausgebremst — die
+laufen weiter mit `rpc_poll_ms`.
+
+**Was das für dich heißt:** Der Bot handelt in diesem Modus deutlich seltener
+und später. Es kann Minuten dauern, bis der erste Trade kommt — das ist kein
+Fehler, das ist die Strategie. Zurück auf das alte Verhalten kommst du
+jederzeit mit `entry_mode: momentum`.
+
+**Und die ehrliche Ansage:** `survivor` ist der bessere Ansatz, aber auch er
+ist keine Gewinngarantie. Pump.fun-Sniping bleibt ein Negativsummenspiel — jede
+Runde kostet 6–12 % an Gebühren und Slippage. Lass ihn erst ein paar Stunden in
+der Simulation laufen (`live_trading: false`) und schau mit `auswertung.bat`
+nach, bevor du echtes Geld einsetzt.
+
 ### Die wichtigsten Werte
 
 | Einstellung | Wirkung, wenn du sie **erhöhst** |
 |---|---|
 | `position_size_sol` | Größerer Einsatz → größere Gewinne **und** Verluste |
 | `max_open_positions` | Mehr Token gleichzeitig → mehr Streuung, mehr Kapitalbedarf |
-| `signal_window_sec` | Bot wartet länger ab → sicherere Signale, schlechterer Einstiegskurs |
-| `min_net_buy_volume_sol` | **Strenger.** Weniger Trades, nur bei echtem Kaufdruck |
-| `min_price_gain_in_window_pct` | **Strenger.** Nur Token, die schon deutlich anziehen |
-| `max_curve_progress_pct` | Lockerer — kauft auch später gelaufene Token |
+| `signal_window_sec` | Bot wartet länger ab → sicherere Signale, schlechterer Einstiegskurs *(nur `momentum`)* |
+| `min_net_buy_volume_sol` | **Strenger.** Weniger Trades, nur bei echtem Kaufdruck *(nur `momentum`)* |
+| `min_price_gain_in_window_pct` | **Strenger.** Nur Token, die schon deutlich anziehen *(nur `momentum`)* |
+| `max_curve_progress_pct` | Lockerer — kauft auch später gelaufene Token *(nur `momentum`; im Survivor-Modus gilt `survivor.max_curve_progress_pct`)* |
+| `survivor.min_age_sec` | **Strenger.** Der Bot wartet länger ab, bevor er überhaupt kauft *(nur `survivor`)* |
+| `survivor.min_inflow_pct_of_curve` | **Strenger.** Weniger Trades, nur bei deutlichem frischem Zufluss *(nur `survivor`)* |
 | `take_profit_pct` | Gewinne laufen lassen, aber häufiger wieder abgeben |
 | `stop_loss_pct` | Weiterer Stop → weniger Fehlausstiege, größere Einzelverluste |
 | `hard_time_stop_sec` | Längere Haltedauer (**harte Obergrenze**) |
@@ -397,7 +462,13 @@ lieber nicht. Siehst du das sehr häufig, sag Bescheid: dann hat pump.fun
 vermutlich etwas am Account-Format geändert.
 
 ### Der Bot snipet nichts
-Meist korrekt — die Filter sind streng. Starte mit `--verbose` bzw. schau in `session.log`: dort steht für jeden übersprungenen Token der Grund, z. B. `SKIP ABC: Kaufdruck zu klein (0.42 < 1.5 SOL)`. Siehst du immer dieselbe Begründung, ist das die Stellschraube.
+**Bei `entry_mode: survivor` ist das am Anfang normal.** Der Bot kauft
+frühestens, wenn ein Token 2 Minuten alt ist und dann wieder Zufluss bekommt —
+es kann also einige Minuten dauern, bis der erste Trade kommt. Im Dashboard
+siehst du unter „Beobachtet", wie viele Token gerade auf der Watchlist liegen;
+solange die Zahl steigt, arbeitet er.
+
+Ansonsten meist korrekt — die Filter sind streng. Starte mit `--verbose` bzw. schau in `session.log`: dort steht für jeden übersprungenen Token der Grund, z. B. `SKIP ABC: Kaufdruck zu klein (0.42 < 1.5 SOL)`. Siehst du immer dieselbe Begründung, ist das die Stellschraube.
 
 ### „Kauf ist NICHT durchgegangen"
 Normal beim Sniping. Die Transaktion hat es nicht rechtzeitig in einen Block geschafft oder das Slippage-Limit wurde gerissen. Der Bot bucht nichts und macht weiter. Häuft es sich: `priority_fee_sol` erhöhen (z. B. `0.001`) oder `order_slippage_pct` hochsetzen.
@@ -461,7 +532,7 @@ pumpfun-paper-sniper/
 │   ├── dashboard.py        ← Live-Anzeige
 │   └── main.py             ← Start, Abschaltung, Zusammenfassung
 │
-└── tests/                  ← 73 automatische Tests
+└── tests/                  ← 101 automatische Tests
 ```
 
 ### Tests ausführen
@@ -470,7 +541,7 @@ pumpfun-paper-sniper/
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-Erwartet: `73 passed`.
+Erwartet: `101 passed`.
 
 ### Simulation erzwingen
 

@@ -163,6 +163,13 @@ class Candidate:
     max_price: float = 0.0
     ticks: int = 0
 
+    #: Hoechststand des echten SOL in der Kurve seit Beobachtungsbeginn.
+    #: Referenz dafuer, ob gerade abgezogen wird (Survivor-Strategie).
+    peak_real_sol: int = 0
+    #: Fruehestens zu diesem Zeitpunkt wieder abfragen. Haelt die RPC-Last
+    #: klein, wenn viele Token ueber Minuten beobachtet werden.
+    next_poll_at: float = 0.0
+
     @property
     def mint(self) -> str:
         return self.event.mint
@@ -193,8 +200,17 @@ class Candidate:
 
         if self.start_sol_reserves is None:
             self.start_sol_reserves = state.real_sol_reserves
+        if state.real_sol_reserves > self.peak_real_sol:
+            self.peak_real_sol = state.real_sol_reserves
 
         self.flow.add(now, state.real_sol_reserves)
+
+    @property
+    def drain_from_peak_pct(self) -> float:
+        """Wie weit das echte SOL unter seinem Hoechststand liegt (Prozent)."""
+        if self.peak_real_sol <= 0 or self.last_state is None:
+            return 0.0
+        return (1.0 - self.last_state.real_sol_reserves / self.peak_real_sol) * 100.0
 
     @property
     def price_gain_pct(self) -> float:
@@ -331,6 +347,83 @@ def evaluate_entry(candidate: Candidate, cfg: Config) -> EntryDecision:
         True,
         f"Progress {progress:.1f}% | Kaufdruck {net_buy:.2f} SOL | Momentum {gain:+.1f}%",
     )
+
+
+def evaluate_survivor_entry(candidate: Candidate, cfg: Config) -> EntryDecision:
+    """
+    Einstiegspruefung der "Ueberlebenden"-Strategie.
+
+    Gegenentwurf zum Ausbruchskauf. Statt den ersten Schub eines brandneuen
+    Tokens zu kaufen, wird hier gewartet, bis ein Token
+      * die ersten Minuten ueberlebt hat,
+      * nicht gerade leergezogen wird,
+      * und DANACH wieder frischen Zufluss bekommt.
+
+    Warum: In den Messdaten sterben 34 % der Positionen in den ersten 30
+    Sekunden, aber nur noch 9 % im Bereich 60-120 Sekunden. Und wer auf den
+    ersten Ausbruch kauft, ist die Ausstiegsliquiditaet fuer die, die gerade
+    verteilen - das erklaert, warum die Ausbruchsstrategie ueber 430 Trades
+    schlechter abschnitt als Zufall.
+
+    Diese Strategie handelt seltener und spaeter. Sie verzichtet auf den
+    explosiven Anfang und setzt darauf, dass ein Token, der eine Auswahl
+    ueberstanden hat, bessere Chancen hat als einer, der sie noch vor sich hat.
+    """
+    sv = cfg.survivor
+    state = candidate.last_state
+
+    if state is None or candidate.last_price <= 0:
+        return EntryDecision(False, "keine Kursdaten (RPC)")
+    if candidate.ticks < 2:
+        return EntryDecision(False, f"zu wenig Messpunkte ({candidate.ticks})")
+    if cfg.skip_if_complete and not state.is_tradable:
+        return EntryDecision(False, "Token migriert (complete)")
+    if not state.is_standard_layout(cfg.advanced.max_curve_layout_deviation_sol):
+        return EntryDecision(
+            False, f"kein Standard-Kurvenlayout "
+                   f"(Abweichung {state.layout_deviation_sol:+.2f} SOL)")
+
+    # 1) Alt genug? Das ist der Kern der Strategie.
+    age = candidate.age_sec
+    if age < sv.min_age_sec:
+        return EntryDecision(False, f"noch zu jung ({age:.0f}s < {sv.min_age_sec:.0f}s)")
+    if age > sv.max_age_sec:
+        return EntryDecision(False, f"zu alt ({age:.0f}s > {sv.max_age_sec:.0f}s)")
+
+    # 2) Curve-Progress im Fenster - noch Luft nach oben, aber nicht tot.
+    progress = state.progress_pct(cfg.advanced.initial_real_token_reserves)
+    if progress < sv.min_curve_progress_pct:
+        return EntryDecision(
+            False, f"Progress zu niedrig ({progress:.1f}% < {sv.min_curve_progress_pct}%)")
+    if progress > sv.max_curve_progress_pct:
+        return EntryDecision(
+            False, f"Progress zu hoch ({progress:.1f}% > {sv.max_curve_progress_pct}%)")
+
+    # 3) Wird gerade abgezogen? Dann ist es kein Ueberlebender.
+    drain = candidate.drain_from_peak_pct
+    if drain > sv.max_drain_from_peak_pct:
+        return EntryDecision(
+            False, f"Kurve laeuft leer ({drain:.0f}% unter Hoechststand)")
+
+    # 4) Frischer Zufluss - relativ zur Kurvengroesse, nie als feste SOL-Zahl.
+    zufluss = candidate.flow.net_flow_sol(sv.inflow_window_sec)
+    noetig = state.real_sol * (sv.min_inflow_pct_of_curve / 100.0)
+    if zufluss < noetig:
+        return EntryDecision(
+            False, f"zu wenig frischer Zufluss ({zufluss:+.2f} < {noetig:.2f} SOL "
+                   f"in {sv.inflow_window_sec:.0f}s)")
+
+    # 5) Dev-Anteil wie gehabt.
+    dev_pct = candidate.event.dev_holding_pct
+    if dev_pct > cfg.max_dev_holding_pct:
+        return EntryDecision(
+            False, f"Dev haelt zu viel ({dev_pct:.1f}% > {cfg.max_dev_holding_pct}%)")
+
+    return EntryDecision(
+        True,
+        f"Alter {age:.0f}s | Progress {progress:.1f}% | "
+        f"Zufluss {zufluss:+.2f} SOL in {sv.inflow_window_sec:.0f}s | "
+        f"{drain:.0f}% unter Hoch")
 
 
 # ---------------------------------------------------------------------------

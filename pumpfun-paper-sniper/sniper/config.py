@@ -127,6 +127,49 @@ class AdvancedConfig:
 
 
 @dataclass(frozen=True)
+class SurvivorConfig:
+    """
+    Einstellungen der "Ueberlebenden"-Strategie (entry_mode: survivor).
+
+    Idee: NICHT den ersten Ausbruch kaufen, sondern Token, die die ersten
+    Minuten ueberstanden haben und DANACH wieder Zufluss bekommen.
+
+    Warum: In den Messdaten sterben 34 % der Positionen in den ersten 30
+    Sekunden (Rug, leergezogene Kurve), aber nur noch 9 % im Bereich
+    60-120 Sekunden. Wer die erste Minute uebersteht, ist ein anderer
+    Kandidat. Ausserdem ist man beim Ausbruch die Ausstiegsliquiditaet fuer
+    die, die gerade verteilen - danach nicht mehr.
+    """
+
+    #: Fruehestens so alt darf ein Token beim Kauf sein.
+    min_age_sec: float = 120.0
+    #: Danach wird er nicht mehr beobachtet (haelt die Watchlist klein).
+    max_age_sec: float = 900.0
+
+    #: Curve-Progress-Fenster. Weiter gefasst als beim Ausbruchskauf, weil
+    #: ueberlebende Token naturgemaess schon weiter gelaufen sind.
+    min_curve_progress_pct: float = 5.0
+    max_curve_progress_pct: float = 60.0
+
+    #: Ueber dieses Fenster wird der frische Zufluss gemessen.
+    inflow_window_sec: float = 60.0
+    #: So viel muss in diesem Fenster zugeflossen sein - als Anteil des SOL,
+    #: das in der Kurve liegt. Relativ, nicht absolut (der Fehler, der diesem
+    #: Projekt schon viermal passiert ist).
+    min_inflow_pct_of_curve: float = 12.0
+
+    #: Das echte SOL darf nicht nennenswert von seinem Hoechststand weg sein.
+    #: Ein Token, aus dem gerade abgezogen wird, ist kein Ueberlebender.
+    max_drain_from_peak_pct: float = 12.0
+
+    #: Wie viele Token gleichzeitig beobachtet werden. Begrenzt die RPC-Last.
+    watchlist_max_tokens: int = 150
+    #: Wie oft ein Token auf der Watchlist abgefragt wird. Deutlich seltener
+    #: als offene Positionen - hier zaehlen Minuten, nicht Millisekunden.
+    watchlist_poll_sec: float = 3.0
+
+
+@dataclass(frozen=True)
 class LiveConfig:
     """Einstellungen, die nur im Echtgeld-Modus greifen."""
 
@@ -194,6 +237,13 @@ class Config:
     slippage_pct: float
     simulated_priority_fee_sol: float
     rpc_poll_ms: int
+
+    # ---- Strategie ----
+    #: "momentum" = den Ausbruch neuer Token kaufen (urspruengliche Strategie)
+    #: "survivor" = Token kaufen, die die ersten Minuten ueberlebt haben und
+    #:              danach wieder Zufluss bekommen
+    entry_mode: str = "momentum"
+    survivor: SurvivorConfig = field(default_factory=SurvivorConfig)
 
     # ---- Betriebsart ----
     #: False = reine Simulation (Standard). True = ECHTES GELD.
@@ -458,6 +508,8 @@ def load_config(config_path: Path | None = None,
         rpc_poll_ms=_as_int(data, "rpc_poll_ms", minimum=100),
         # Betriebsart: fehlt der Eintrag, wird bewusst simuliert.
         # Echtgeld muss man ausdruecklich einschalten, nie aus Versehen.
+        entry_mode=str(data.get("entry_mode", "momentum")).strip().lower(),
+        survivor=_build_survivor(data.get("survivor")),
         live_trading=bool(data.get("live_trading", False)),
         live=_build_live(data.get("live")),
         # Laufzeit
@@ -470,6 +522,36 @@ def load_config(config_path: Path | None = None,
     _check_plausibility(cfg)
     _check_live_requirements(cfg)
     return cfg
+
+
+def _build_survivor(raw: Any) -> SurvivorConfig:
+    """Baut den `survivor:`-Block; fehlende Werte bekommen ihre Defaults."""
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ConfigError("Der Block 'survivor:' in der config.yaml ist fehlerhaft.")
+    d = SurvivorConfig()
+    cfgs = SurvivorConfig(
+        min_age_sec=float(raw.get("min_age_sec", d.min_age_sec)),
+        max_age_sec=float(raw.get("max_age_sec", d.max_age_sec)),
+        min_curve_progress_pct=float(
+            raw.get("min_curve_progress_pct", d.min_curve_progress_pct)),
+        max_curve_progress_pct=float(
+            raw.get("max_curve_progress_pct", d.max_curve_progress_pct)),
+        inflow_window_sec=float(raw.get("inflow_window_sec", d.inflow_window_sec)),
+        min_inflow_pct_of_curve=float(
+            raw.get("min_inflow_pct_of_curve", d.min_inflow_pct_of_curve)),
+        max_drain_from_peak_pct=float(
+            raw.get("max_drain_from_peak_pct", d.max_drain_from_peak_pct)),
+        watchlist_max_tokens=int(
+            raw.get("watchlist_max_tokens", d.watchlist_max_tokens)),
+        watchlist_poll_sec=float(raw.get("watchlist_poll_sec", d.watchlist_poll_sec)),
+    )
+    if cfgs.min_age_sec >= cfgs.max_age_sec:
+        raise ConfigError("survivor.min_age_sec muss kleiner als max_age_sec sein.")
+    if cfgs.watchlist_max_tokens < 1:
+        raise ConfigError("survivor.watchlist_max_tokens muss mindestens 1 sein.")
+    return cfgs
 
 
 def _check_live_requirements(cfg: Config) -> None:
@@ -512,6 +594,11 @@ def _check_plausibility(cfg: Config) -> None:
     keinen Sinn ergeben. Besser jetzt ein klarer Fehler als spaeter komisches
     Verhalten im Handel.
     """
+    if cfg.entry_mode not in ("momentum", "survivor"):
+        raise ConfigError(
+            f"entry_mode muss 'momentum' oder 'survivor' sein, "
+            f"gefunden: {cfg.entry_mode!r}")
+
     if cfg.min_curve_progress_pct > cfg.max_curve_progress_pct:
         raise ConfigError(
             "min_curve_progress_pct darf nicht groesser sein als "
