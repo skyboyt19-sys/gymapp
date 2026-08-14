@@ -834,3 +834,69 @@ def test_nachkauf_abschaltbar(tmp_path):
     darf, _ = should_add_to_position(position, curve_at(10.0), cfg,
                                      net_flow_sol=1.0)
     assert darf is False
+
+
+# ---------------------------------------------------------------------------
+# Drain-Notausstieg
+# ---------------------------------------------------------------------------
+def test_drain_ausstieg_erkennt_den_rug_am_echten_sol(tmp_path):
+    """
+    Regressionstest zu 16 Trades aus dem Betrieb (POK, TAKEOVER, Rubio ...):
+    Ø -95 % Ergebnis bei Kursbewegungen von nur -21 bis -47 %.
+
+    Grund: Wird eine Bonding Curve leergezogen, faellt der KURS nur auf sein
+    Launch-Niveau zurueck - je nach Einstieg -17 bis -47 %. Der Stop-Loss bei
+    -30 % greift dabei oft gar nicht, obwohl schon kein SOL mehr da ist, um die
+    Position auszuzahlen.
+
+    Das echte SOL in der Kurve zeigt es dagegen sofort.
+    """
+    cfg = make_config(tmp_path)
+
+    # Einstieg bei 3 SOL in der Kurve, danach wird sie zu 90 % leergezogen.
+    # Der Kurs faellt dabei nur um rund 16 % - siehe Docstring.
+    voll = curve_at(3.0)
+    geleert = curve_at(0.3)
+
+    position = make_position(entry_price=voll.price_sol,
+                             last_price=geleert.price_sol, age_sec=30.0)
+    position.peak_real_sol = voll.real_sol_reserves
+
+    # Der Kurs allein wuerde den Stop-Loss NICHT ausloesen ...
+    assert position.price_change_pct > -cfg.stop_loss_pct
+
+    # ... der Abfluss aus der Kurve aber schon.
+    decision = decide_exit(position, geleert, cfg,
+                           tick_drop_pct=0.0, net_flow_sol=0.0)
+    assert decision.action == "close"
+    assert decision.reason == ExitReason.DRAIN
+    assert "abgeflossen" in decision.detail
+
+
+def test_drain_ausstieg_bei_normalem_handel_ruhig(tmp_path):
+    """Gegenprobe: kleine Schwankungen der Kurve duerfen nichts ausloesen."""
+    cfg = make_config(tmp_path)
+    voll = curve_at(10.0)
+    leicht_weniger = curve_at(8.5)      # 15 % Abfluss - normaler Handel
+
+    position = make_position(entry_price=voll.price_sol,
+                             last_price=leicht_weniger.price_sol, age_sec=30.0)
+    position.peak_real_sol = voll.real_sol_reserves
+
+    decision = decide_exit(position, leicht_weniger, cfg,
+                           tick_drop_pct=0.0, net_flow_sol=0.0)
+    assert decision.action == "hold"
+
+
+def test_drain_ausstieg_abschaltbar(tmp_path):
+    cfg = make_config(tmp_path)
+    object.__setattr__(cfg.advanced, "real_sol_drain_exit_pct", 0.0)
+
+    voll, geleert = curve_at(10.0), curve_at(1.0)
+    position = make_position(entry_price=voll.price_sol,
+                             last_price=geleert.price_sol, age_sec=30.0)
+    position.peak_real_sol = voll.real_sol_reserves
+
+    decision = decide_exit(position, geleert, cfg,
+                           tick_drop_pct=0.0, net_flow_sol=0.0)
+    assert decision.reason != ExitReason.DRAIN

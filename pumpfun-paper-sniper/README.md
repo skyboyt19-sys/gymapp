@@ -74,6 +74,7 @@ Standardmäßig läuft der Bot simuliert. Das Dashboard zeigt:
 | `TRAIL` | Trailing-Stop |
 | `SL` | Stop-Loss (−30 %) |
 | `RUG` | Kurssturz in einem einzigen Tick |
+| `DRAIN` | Das echte SOL fließt aus der Kurve ab — Rug im Gange. Der zuverlässigste Alarm, weil ein kompletter Rug den *Kurs* nur um −17 bis −47 % bewegt und den Stop-Loss oft gar nicht auslöst. |
 | `LIQ` | Kurve leergezogen — der Kurs steht, aber es ist kein SOL mehr da, das ausgezahlt werden könnte |
 | `FLIP` | Kaufdruck in Nettoverkäufe gekippt |
 | `FLAU` | Stillstand — nach 90 s immer noch im Band ±15 % um den Einstieg |

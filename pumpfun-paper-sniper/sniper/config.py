@@ -47,7 +47,19 @@ class AdvancedConfig:
     #: So lange nach dem Einstieg loesen die "weichen" Ausstiege (Flip,
     #: Stillstand) nicht aus. Echte Notfaelle - Rug, Stop-Loss, leere Kurve,
     #: Migration - greifen weiterhin sofort.
-    min_hold_before_soft_exit_sec: float = 15.0
+    #: Von 15 auf 5 s gesenkt: Bei 15 s verdoppelte sich der Verlust pro Trade,
+    #: weil der Flip-Ausstieg (Ø -10 %) nicht mehr bremsen konnte und die
+    #: Positionen stattdessen in Rug (Ø -36 %) und leere Kurven (Ø -95 %) liefen.
+    min_hold_before_soft_exit_sec: float = 5.0
+
+    #: Notausstieg, wenn das ECHTE SOL in der Kurve gegenueber seinem Hoechst-
+    #: stand seit dem Einstieg um diesen Anteil faellt. 0 = aus.
+    #: Das ist der einzige zuverlaessige Rug-Alarm: Wird eine Kurve komplett
+    #: leergezogen, faellt der KURS nur auf sein Launch-Niveau zurueck - je
+    #: nach Einstieg sind das nur -17 bis -47 %. Der Stop-Loss bei -30 % greift
+    #: dabei oft gar nicht, obwohl die Position schon nichts mehr wert ist,
+    #: weil kein SOL mehr zum Auszahlen da ist.
+    real_sol_drain_exit_pct: float = 45.0
 
     #: Wie weit ein Bonding-Curve-Account von der Standardbeziehung
     #: "virtuelles SOL - 30 == echtes SOL" abweichen darf, bevor der Token
@@ -284,6 +296,8 @@ def _build_advanced(raw: Any) -> AdvancedConfig:
         min_hold_before_soft_exit_sec=float(
             raw.get("min_hold_before_soft_exit_sec",
                     defaults.min_hold_before_soft_exit_sec)),
+        real_sol_drain_exit_pct=float(
+            raw.get("real_sol_drain_exit_pct", defaults.real_sol_drain_exit_pct)),
         max_price_gain_in_window_pct=float(
             raw.get("max_price_gain_in_window_pct",
                     defaults.max_price_gain_in_window_pct)),

@@ -239,6 +239,7 @@ class LiveEngine(PaperEngine):
                 sol_spent=sol_spent,
                 last_price=state.price_sol,
                 peak_price=state.price_sol,
+                peak_real_sol=state.real_sol_reserves,
                 entry_snapshot=snapshot or EntrySnapshot(),
             )
             self.positions[mint] = position

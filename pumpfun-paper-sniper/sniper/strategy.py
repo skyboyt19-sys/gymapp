@@ -444,6 +444,29 @@ def decide_exit(
     # begrenzt der Stop-Loss auf -30 %, nach oben ist es offen.
     schonzeit = position.age_sec < cfg.advanced.min_hold_before_soft_exit_sec
 
+    # --- 0a) Rug-Alarm ueber das echte SOL in der Kurve --------------------
+    #
+    # Der wichtigste Notausstieg, und der einzige, der einen Rug zuverlaessig
+    # sieht. Grund: Wird eine Bonding Curve komplett leergezogen, faellt der
+    # KURS nur auf sein Launch-Niveau zurueck - je nach Einstieg sind das nur
+    # -17 bis -47 %. Der Stop-Loss bei -30 % greift dabei oft gar nicht,
+    # obwohl schon kein SOL mehr da ist, um die Position auszuzahlen.
+    #
+    # Im Betrieb: 16 Positionen endeten so mit Ø -95 %, bei Kursbewegungen von
+    # nur -21 bis -47 %. Zusammen -2.29 SOL.
+    #
+    # Das echte SOL in der Kurve zeigt es dagegen sofort: Es faellt bei jedem
+    # Verkauf, und ein Rug zieht es in Sekunden ab.
+    drain_limit = cfg.advanced.real_sol_drain_exit_pct
+    if drain_limit > 0 and position.peak_real_sol > 0:
+        abfall = (1.0 - state.real_sol_reserves / position.peak_real_sol) * 100.0
+        if abfall >= drain_limit:
+            return ExitDecision(
+                "close", ExitReason.DRAIN,
+                detail=f"{abfall:.0f}% des SOL aus der Kurve abgeflossen "
+                       f"({position.peak_real_sol / 1e9:.2f} -> "
+                       f"{state.real_sol:.2f} SOL)")
+
     # --- 0b) Liquiditaets-Notausgang --------------------------------------
     #
     # Der Kurs einer Bonding Curve wird aus den VIRTUELLEN Reserven gerechnet.

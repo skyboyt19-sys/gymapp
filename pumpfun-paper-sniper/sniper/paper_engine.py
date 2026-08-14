@@ -44,6 +44,7 @@ class ExitReason:
     NET_SELL_FLIP = "FLIP"   # Kaufdruck ist in Nettoverkaeufe gekippt
     STAGNATION = "FLAU"      # Kurs bewegt sich nicht mehr - Kapital freimachen
     LIQUIDITY = "LIQ"        # Kurve leergezogen: Kurs steht, Auszahlung fehlt
+    DRAIN = "DRAIN"          # echtes SOL fliesst massiv ab - Rug im Gange
     TIME_STOP = "TIME"       # harter Zeitstopp
     MIGRATED = "MIGR"        # Token ist zu PumpSwap migriert
     SHUTDOWN = "SHUTDOWN"    # Bot wurde beendet (Strg+C)
@@ -94,6 +95,10 @@ class Position:
 
     #: Womit der Einstieg begruendet wurde - fuer die Auswertung in trades.csv
     entry_snapshot: EntrySnapshot = field(default_factory=EntrySnapshot)
+
+    #: Hoechststand des ECHTEN SOL in der Kurve seit dem Einstieg (Lamports).
+    #: Referenz fuer den Drain-Notausstieg - siehe ExitReason.DRAIN.
+    peak_real_sol: int = 0
 
     #: Wie oft in diesen Token schon gekauft wurde (1 = nur der Ersteinstieg).
     #: Nachkaeufe erhoehen `tokens` und `sol_spent` derselben Position; der
@@ -327,6 +332,7 @@ class PaperEngine:
             sol_spent=sol_spent,
             last_price=state.price_sol,
             peak_price=state.price_sol,
+            peak_real_sol=state.real_sol_reserves,
             entry_snapshot=snapshot or EntrySnapshot(),
         )
         self.positions[mint] = position

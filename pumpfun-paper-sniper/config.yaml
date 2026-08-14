@@ -184,7 +184,24 @@ advanced:
   # geschlossen, KEINE einzige mit Gewinn, zusammen 94 % des Gesamtverlusts.
   # Bei Ø -15 % Ausstieg ist Halten die bessere Wette: nach unten begrenzt der
   # Stop-Loss auf -30 %, nach oben ist es offen.
-  min_hold_before_soft_exit_sec: 15
+  # Von 15 auf 5 s gesenkt: Bei 15 s verdoppelte sich der Verlust pro Trade
+  # (-18.6 -> -34.7 mSOL), weil der Flip-Ausstieg (Ø -10 %) nicht mehr bremsen
+  # konnte und die Positionen stattdessen in Rug (Ø -36 %) und leergezogene
+  # Kurven (Ø -95 %) liefen.
+  min_hold_before_soft_exit_sec: 5
+
+  # --- Rug-Alarm ueber das echte SOL in der Kurve ---
+  # Faellt das ECHTE SOL in der Kurve um diesen Anteil unter seinen
+  # Hoechststand seit dem Einstieg, wird sofort verkauft. 0 = aus.
+  #
+  # Das ist der einzige zuverlaessige Rug-Alarm. Wird eine Kurve komplett
+  # leergezogen, faellt der KURS naemlich nur auf sein Launch-Niveau zurueck -
+  # je nach Einstieg sind das nur -17 bis -47 %. Der Stop-Loss bei -30 % greift
+  # dabei oft gar nicht, obwohl die Position schon nichts mehr wert ist:
+  # es ist kein SOL mehr da, um sie auszuzahlen.
+  # (Im Betrieb: 16 Positionen endeten so mit Ø -95 %, bei Kursbewegungen von
+  #  nur -21 bis -47 %. Zusammen -2.29 SOL von -7.47 SOL Gesamtverlust.)
+  real_sol_drain_exit_pct: 45
 
   # Flip-Fenster und -Schwelle bremsen auch den EINSTIEG: Laeuft der Abverkauf
   # schon, wird nicht gekauft. Sonst kauft der Bot Spitzen, die gerade kippen.

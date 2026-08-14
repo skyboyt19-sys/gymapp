@@ -220,6 +220,10 @@ class MarketLoop:
         # -- Kurs und Fluss-Historie aktualisieren --
         if usable:
             self.engine.update_position_price(position, state.price_sol)  # type: ignore[union-attr]
+            # Hoechststand des echten SOL mitfuehren - Referenz fuer den
+            # Drain-Notausstieg.
+            if state.real_sol_reserves > position.peak_real_sol:  # type: ignore[union-attr]
+                position.peak_real_sol = state.real_sol_reserves  # type: ignore[union-attr]
             flow = self.position_flows.setdefault(position.mint, FlowTracker())
             flow.add(now, state.real_sol_reserves)  # type: ignore[union-attr]
 
